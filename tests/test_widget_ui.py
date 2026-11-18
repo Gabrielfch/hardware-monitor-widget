@@ -19,7 +19,17 @@ from tools.synthetic import make_snapshot
 
 @pytest.fixture
 def widget(qapp):
+    """Ungrouped (one pill per sensor): the original behaviour, kept under test."""
     w = TaskbarWidget(list(DEFAULTS["pinned"]))
+    w.set_grouped(False)
+    yield w
+    w.close()
+
+
+@pytest.fixture
+def gwidget(qapp):
+    w = TaskbarWidget(list(DEFAULTS["pinned"]))
+    assert w.is_grouped()
     yield w
     w.close()
 
@@ -288,8 +298,9 @@ def fake(qapp, monkeypatch):
 def placed(fake, monkeypatch):
     made = []
 
-    def make(settings=None, screens=(P, B), bar=None, pinned=None):
+    def make(settings=None, screens=(P, B), bar=None, pinned=None, grouped=False):
         wd = TaskbarWidget(pinned if pinned is not None else list(DEFAULTS["pinned"]))
+        wd.set_grouped(grouped)
         real = QGuiApplication.primaryScreen()
         shown = list(screens)
         wd._screens = lambda: [(s, real) for s in shown]
@@ -591,6 +602,7 @@ def test_left_anchor_without_centred_icons_falls_back_and_warns_once(qapp, fake,
     monkeypatch.setattr(taskbar, "taskbar_icons_centered", lambda: False)
     monkeypatch.setattr(taskbar, "get_taskbar_infos", lambda: [taskbar.TaskbarInfo(**BAR)])
     wd = TaskbarWidget(list(DEFAULTS["pinned"]))
+    wd.set_grouped(False)
     real = QGuiApplication.primaryScreen()
     wd._screens = lambda: [(P, real)]
     got = []
@@ -686,3 +698,156 @@ def test_signals_exist(widget):
     for name in ("clicked", "context_menu_requested", "floating_moved", "monitor_changed",
                  "fullscreen_placement_changed", "placement_warning"):
         assert hasattr(widget, name)
+
+
+# ------------------------------------------------------------------ grouped pills (one per hardware)
+def _real_widget(grouped):
+    from tools.synthetic import load_real_snapshot
+    w = TaskbarWidget(list(DEFAULTS["pinned"]))
+    w.set_grouped(grouped)
+    w.set_snapshot(load_real_snapshot())
+    return w
+
+
+def test_grouped_real_fixture_has_one_pill_per_hardware_and_is_narrower(qapp):
+    g, u = _real_widget(True), _real_widget(False)
+    try:
+        assert [len(p.segments) for p in g.pills()] == [2, 2, 1] and len(u.pills()) == 5
+        assert g.width() < u.width()
+        assert [p.hw_kind for p in g.pills()] == ["cpu", "gpu", "ram"]
+        g.grab()
+    finally:
+        g.close()
+        u.close()
+
+
+def test_grouped_texts_bands_and_order(gwidget):
+    gwidget.set_snapshot(make_snapshot(cpu_temp=62.0, gpu_temp=71.0, ram=48.0))
+    assert gwidget.pill_texts() == ["62°C 23%", "71°C 38%", "48%"]
+    assert [[s.band for s in p.segments] for p in gwidget.pills()] == [["amber", "green"], ["amber", "green"],
+                                                                      ["green"]]
+    assert gwidget.pill_keys()[0].startswith("group:")
+
+
+def test_grouping_follows_first_appearance_and_pin_order(gwidget):
+    snap = make_snapshot()
+    gwidget.set_pinned(["auto:cpu_load", "auto:gpu_temp", "auto:cpu_temp", "auto:ram_load"])
+    gwidget.set_snapshot(snap)
+    assert [p.hw_kind for p in gwidget.pills()] == ["cpu", "gpu", "ram"]
+    assert gwidget.pills()[0].text.split()[0] == "23%"          # load pinned before temperature
+
+
+def test_grouped_critical_segment_alerts_the_whole_pill(gwidget):
+    gwidget.set_snapshot(make_snapshot(cpu_temp=90.0))
+    cpu = gwidget.pills()[0]
+    assert cpu.alert and cpu.band == "red" and cpu.segments[0].text == "! 90°C" and not cpu.segments[1].alert
+    assert not gwidget.pills()[1].alert
+    assert "crítico" in gwidget.accessibleDescription()
+    gwidget.grab()
+
+
+def test_grouped_tooltip_and_accessible_description(gwidget):
+    gwidget.set_snapshot(make_snapshot(cpu_temp=62.0))
+    tip = gwidget.pills()[0].tooltip.split("\n")
+    assert tip[0] == "AMD Ryzen 7 5800X" and len(tip) == 3
+    assert tip[1].startswith("CPU (Tctl/Tdie): 62°C") and "mín 38°C" in tip[1] and "máx 81°C" in tip[1]
+    assert tip[2].startswith("Carga total: 23%")
+    desc = gwidget.accessibleDescription()
+    assert "AMD Ryzen 7 5800X" in desc and "62°C" in desc and "23%" in desc and "48%" in desc
+
+
+def test_grouped_stale_dims_and_tooltip(gwidget):
+    snap = make_snapshot()
+    gwidget.set_snapshot(Snapshot(snap.sensors, {"native": SourceStatus("native", True, "stale", "x")}, 1.0))
+    assert all(p.stale for p in gwidget.pills()) and gwidget.pills()[0].tooltip.startswith("Datos no actualizados")
+    gwidget.grab()
+
+
+def test_grouped_width_is_stable_across_digits(gwidget):
+    gwidget.set_snapshot(make_snapshot(cpu_temp=9.0))
+    w1 = gwidget._rects[0][2]
+    gwidget.set_snapshot(make_snapshot(cpu_temp=64.0))
+    assert gwidget._rects[0][2] == w1
+
+
+def test_grouped_overflow_never_splits_a_group_that_fits(gwidget):
+    gwidget.set_snapshot(make_snapshot())
+    full = gwidget.width()
+    first = gwidget._rects[0][2]
+    gwidget.set_extent_limit(first + gwidget._rects[1][2] + 30)         # two groups and the "+K"
+    pills = gwidget.pills()
+    assert pills[-1].overflow and [len(p.segments) for p in pills[:-1]] == [2, 2]
+    assert pills[-1].text == "+1" and len(gwidget.hidden_pills()) == 1 and gwidget.width() < full
+    gwidget.set_extent_limit(None)
+    assert not gwidget.pills()[-1].overflow and gwidget.hidden_pills() == []
+
+
+def test_grouped_lone_group_that_does_not_fit_keeps_leading_segments(gwidget):
+    gwidget.set_pinned(["auto:cpu_temp", "auto:cpu_load", "hw//amdcpu/0/power/0"])
+    gwidget.set_snapshot(make_snapshot())
+    assert len(gwidget.pills()) == 1 and len(gwidget.pills()[0].segments) == 3
+    full = gwidget.width()
+    gwidget.set_extent_limit(full - 30)
+    pills = gwidget.pills()
+    assert pills[-1].overflow and len(pills[0].segments) < 3 and len(pills) == 2
+    assert len(pills[0].segments) + len(gwidget.hidden_pills()) == 3 and gwidget.width() <= full - 30
+    gwidget.grab()
+
+
+def test_grouped_compact_mode_drops_bars_and_padding(gwidget):
+    gwidget.set_snapshot(make_snapshot())
+    full = gwidget.width()
+    gwidget.set_extent_limit(full - 6)
+    assert gwidget.is_compact() and gwidget.width() < full and not gwidget.hidden_pills()
+    gwidget.grab()
+
+
+def test_grouped_click_and_right_click(gwidget):
+    gwidget.set_snapshot(make_snapshot())
+    got, menu = [], []
+    gwidget.clicked.connect(lambda: got.append(1))
+    gwidget.context_menu_requested.connect(menu.append)
+    x, y, w, h = gwidget._rects[1]
+    pos = QPointF(x + w / 2, y + h / 2)
+    for kind, btn in ((QEvent.Type.MouseButtonPress, Qt.MouseButton.LeftButton),
+                      (QEvent.Type.MouseButtonRelease, Qt.MouseButton.LeftButton)):
+        gwidget.event(QMouseEvent(kind, pos, gwidget.mapToGlobal(pos), btn, btn, Qt.KeyboardModifier.NoModifier))
+    assert got == [1]
+    btn = Qt.MouseButton.RightButton
+    gwidget.event(QMouseEvent(QEvent.Type.MouseButtonPress, pos, gwidget.mapToGlobal(pos), btn, btn,
+                              Qt.KeyboardModifier.NoModifier))
+    assert len(menu) == 1
+
+
+def test_grouped_vertical_bar_one_line_per_value(placed):
+    wd = placed(grouped=True, bar=dict(rect=(1880, 0, 1920, 1080), tray_rect=(1880, 900, 1920, 1080), edge="right"))
+    wd.set_snapshot(make_snapshot())
+    if not wd._vertical:
+        pytest.skip("placement did not produce a column on this fake")
+    assert [r[3] for r in wd._rects[:2]] == [2 * wd.pill_height()] * 2
+    wd.grab()
+
+
+def test_grouped_style_none_removes_icon_and_scale_grows(gwidget):
+    gwidget.set_snapshot(make_snapshot())
+    base = gwidget.width()
+    gwidget.set_ui_scale(130)
+    assert gwidget.width() > base
+    gwidget.grab()
+
+
+def test_grouped_custom_icon_resolver_gets_the_hardware(gwidget):
+    seen = []
+    gwidget.set_icon_resolver(lambda kind, hw, key: seen.append((kind, hw, key)) or None)
+    gwidget.set_snapshot(make_snapshot())
+    gwidget.grab()
+    assert ("cpu", "hw//amdcpu/0", "group:hw//amdcpu/0") in seen
+
+
+def test_set_grouped_toggles_live_and_back(gwidget):
+    gwidget.set_snapshot(make_snapshot())
+    assert len(gwidget.pills()) == 3
+    gwidget.set_grouped(False)
+    assert len(gwidget.pills()) == 5 and not gwidget.is_grouped()
+    gwidget.set_grouped(True)
+    assert len(gwidget.pills()) == 3

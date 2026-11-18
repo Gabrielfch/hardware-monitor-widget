@@ -82,6 +82,7 @@ DEFAULTS = {
     "custom_colors": dict(DEFAULT_CUSTOM_COLORS),
     "icon_style": "outline",
     "ui_scale": 100,
+    "group_pills": True,            # one pill per hardware (several values) instead of one per sensor
     "panel_size": "normal",
     "language": "auto",
     "placement_mode": "taskbar",
@@ -288,6 +289,7 @@ _CLEANERS = {
     "pinned": _pinned,
     "theme": _enum(THEMES),
     "fahrenheit": _bool,
+    "group_pills": _bool,
     "start_with_windows": _bool,
     "collapsed": _collapsed,
     "hidden_hardware": _hidden,

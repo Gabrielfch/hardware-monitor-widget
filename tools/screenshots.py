@@ -126,11 +126,18 @@ def stack_rows(rows: list[tuple[str, QPixmap]], path: Path, dark: bool = True, s
     out.save(str(path))
 
 
+OVERFLOW_KEYS = ["hw//amdcpu/0/temperature/2", "hw//amdcpu/0/load/0", "hw//amdcpu/0/power/0",
+                 "hw//gpu-amd/0/temperature/0", "hw//gpu-amd/0/load/0", "hw//gpu-amd/0/fan/0",
+                 "hw//ram/0/load/0", "hw//lpc/nct6798d/temperature/0", "hw//nvme/0/temperature/0",
+                 "hw//lpc/nct6798d/fan/1"]
+
+
 def shot_overflow(path: Path) -> None:
-    keys = [s.key for s in make_snapshot().sensors][:10]
+    """Grouped pills (10 pinned values over 5 components) with no limit, compact and compact + "+K"."""
     rows = []
-    for title, limit in (("no limit", None), ("limit 420 px: compact", 420), ("limit 300 px: compact + \"+K\"", 300)):
-        w = TaskbarWidget(keys)
+    for title, limit in (("no limit", None), ("limit 380 px: compact", 380), ("limit 300 px: compact + \"+K\"", 300)):
+        w = TaskbarWidget(OVERFLOW_KEYS)
+        w.set_grouped(True)
         w.set_light_theme(False)
         w.set_snapshot(make_snapshot(cpu_temp=88.0))
         w.set_extent_limit(limit)
@@ -153,10 +160,13 @@ def shot_icons_dpr(path: Path) -> None:
     stack_rows(rows, path, scale=2)
 
 
-def shot_pills(path: Path) -> None:
+def shot_pills(path: Path, grouped: bool = True) -> None:
+    """Default pins plus a second GPU temperature on a dark and a light taskbar (one pill per hardware
+    when `grouped`, one per sensor otherwise)."""
     rows = []
     for dark, temp in ((True, 62.0), (False, 88.0)):
         w = TaskbarWidget(list(DEFAULTS["pinned"]) + ["hw//gpu-amd/0/temperature/1"])
+        w.set_grouped(grouped)
         w.set_light_theme(not dark)
         w.set_snapshot(make_snapshot(cpu_temp=temp))
         w.show()
@@ -209,6 +219,7 @@ def main() -> int:
     shot_error_panel(OUT / "panel-error.png")
     shot_degraded_panel(OUT / "panel-degraded.png")
     shot_pills(OUT / "pills.png")
+    shot_pills(OUT / "pills-ungrouped.png", grouped=False)
     shot_overflow(OUT / "pills-overflow.png")
     shot_icons_dpr(OUT / "icons-dpr.png")
     print("saved:", ", ".join(sorted(p.name for p in OUT.glob("*.png"))))

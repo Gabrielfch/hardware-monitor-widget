@@ -97,6 +97,7 @@ class Controller(QObject):
         self.widget.set_theme(cfg.get("theme"))
         self.widget.set_fahrenheit(bool(cfg.get("fahrenheit")))
         self.widget.set_ui_scale(cfg.get("ui_scale"))
+        self.widget.set_grouped(bool(cfg.get("group_pills")))
         self.widget.set_icon_resolver(custom_icons.file_for)
         self.widget.set_placement_settings(self._placement())
         p = self.panel

@@ -1,7 +1,8 @@
 """Frameless, always-on-top pill bar docked to the taskbar (right or left end) or floating on a monitor.
 
 Layout, painting, docking and placement adapted from Taskbar Battery Widget (MIT): one rounded pill per
-pinned sensor (hardware icon + value + thin level bar), band-coloured, red outline when critical. When
+pinned sensor (hardware icon + value + thin level bar), band-coloured, red outline when critical; by
+default the sensors of one hardware share a single pill (one icon, several values: "grouped"). When
 the pills do not fit in the free part of the taskbar they go compact (no bar, less padding) and then the
 rest collapse into a "+K" pill.
 
@@ -15,7 +16,7 @@ import math
 import os
 import sys  # noqa: F401  (kept so tests can read widget.sys.platform)
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import shiboken6
 from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
@@ -30,6 +31,7 @@ from .i18n import decimal_sep, tr
 from .icons import draw_kind_icon, icons_visible
 from .models import Sensor, Snapshot, band_for, format_value, is_stale, source_reason
 from .pins import resolve_pins
+from .sensor_names import display_name
 from .placement import (DOCK_GAP, MAX_PILL_H, MAX_WIDTH_FRACTION, MIN_PILL_H,  # noqa: F401  (re-exported)
                         REASON_LEFT_NEEDS_CENTERED, REASON_NO_TASKBAR_FLOATING, Env, Placement,
                         PlacementSettings, ScreenInfo, choose_placement, compute_placement, docked_edge_left,
@@ -42,6 +44,8 @@ PAD = 8              # horizontal padding inside a pill
 PAD_COMPACT = 5      # padding in compact mode
 ICON_GAP = 5         # gap between icon and text
 ICON_GAP_COMPACT = 4
+SEG_GAP = 9          # gap between the values of a grouped pill
+SEG_GAP_COMPACT = 6
 MIN_FONT_PX = 12
 BAR_MIN_PILL_H = 24  # below this height the level bar is dropped
 BAR_H = 3.0
@@ -56,6 +60,9 @@ DIM_ALPHA = 170               # stale values
 UI_SCALE_MIN, UI_SCALE_MAX = 90, 130
 EMPTY_KEY = "__empty__"
 OVERFLOW_KEY = "__overflow__"
+GROUP_PREFIX = "group:"
+NEWLINE = chr(10)
+BAND_RANK = {"grey": 0, "green": 1, "amber": 2, "orange": 3, "red": 4}
 DEFAULT_PILL_H = 28
 
 
@@ -128,17 +135,20 @@ def pill_width(text_w: int, icon: int, extra: int = 0, pad: int = PAD, gap: int 
 
 
 def layout_pills(widths: list[int], pill_h: int, vertical: bool = False,
-                 spacing: int = SPACING, margin: int = MARGIN):
-    """Return ([(x, y, w, h), ...], (total_w, total_h)) for pills in a row (or a column)."""
+                 spacing: int = SPACING, margin: int = MARGIN, heights: list[int] | None = None):
+    """Return ([(x, y, w, h), ...], (total_w, total_h)) for pills in a row (or a column).
+
+    `heights` (column only) gives each pill its own height, e.g. a grouped pill with one line per value."""
     if not widths:
         return [], (0, 0)
     rects = []
     if vertical:
         w = max(widths)
         y = margin
-        for _ in widths:
-            rects.append((margin, y, w, pill_h))
-            y += pill_h + spacing
+        for i, _ in enumerate(widths):
+            h = heights[i] if heights else pill_h
+            rects.append((margin, y, w, h))
+            y += h + spacing
         return rects, (w + 2 * margin, y - spacing + margin)
     x = margin
     for w in widths:
@@ -270,9 +280,15 @@ class Pill:
     reserve: str = ""           # text whose width is the minimum width of the value
     overflow: bool = False
     hw_id: str = ""
+    hardware: str = ""
+    line: str = ""              # one tooltip line (translated name, value, min / max) when part of a group
+    brief: str = ""             # accessible "name value" when part of a group
+    segments: list["Pill"] = field(default_factory=list)   # grouped pill: one entry per value
 
     @property
     def has_value(self) -> bool:
+        if self.segments:
+            return any(s.has_value for s in self.segments)
         return self.value is not None
 
 
@@ -284,6 +300,12 @@ def build_pill(sensor: Sensor, fahrenheit: bool = False, reason: str = "ok", sep
     alert = band == "red"
     text = ("! " + plain) if alert else plain
     lines = [sensor.hardware, f"{sensor.name}: {plain}"]
+    line = f"{display_name(sensor)}: {plain}"
+    if sensor.min is not None or sensor.max is not None:
+        line += " · " + tr("min_max", min=format_value(sensor.kind, sensor.min, fahrenheit, sep),
+                           max=format_value(sensor.kind, sensor.max, fahrenheit, sep))
+    if sensor.value is None:
+        line += " · " + (tr("pill_no_data_admin") if reason == "needs_admin" else tr("no_data"))
     if sensor.min is not None or sensor.max is not None:
         lines.append(tr("min_max", min=format_value(sensor.kind, sensor.min, fahrenheit, sep),
                         max=format_value(sensor.kind, sensor.max, fahrenheit, sep)))
@@ -292,9 +314,36 @@ def build_pill(sensor: Sensor, fahrenheit: bool = False, reason: str = "ok", sep
     if stale:
         lines.insert(0, tr("stale_tip"))
     a11y = f"{sensor.hardware} {sensor.name} {plain}" + (", " + tr("critical") if alert else "")
+    brief = f"{display_name(sensor)} {plain}" + (", " + tr("critical") if alert else "")
     return Pill(sensor.key, sensor.hw_kind, sensor.kind, text, "\n".join(lines), band,
                 pill_fraction(sensor), alert, a11y, sensor.value, stale, reserve_text(sensor.kind, fahrenheit),
-                hw_id=sensor.hw_id)
+                hw_id=sensor.hw_id, hardware=sensor.hardware, line=line, brief=brief)
+
+
+def build_group(segs: list[Pill]) -> Pill:
+    """One pill for several sensors of the same hardware: a single icon and one value per sensor."""
+    first = segs[0]
+    stale = any(s.stale for s in segs)
+    lines = ([tr("stale_tip")] if stale else []) + [first.hardware] + [s.line for s in segs]
+    band = max((s.band for s in segs if s.has_value), key=lambda b: BAND_RANK.get(b, 0), default="grey")
+    a11y = f"{first.hardware}: " + ", ".join(s.brief for s in segs)
+    return Pill(GROUP_PREFIX + (first.hw_id or first.hw_kind), first.hw_kind, "", " ".join(s.text for s in segs),
+                NEWLINE.join(lines), band, None, any(s.alert for s in segs), a11y,
+                next((s.value for s in segs if s.value is not None), None), stale, "",
+                hw_id=first.hw_id, hardware=first.hardware, segments=list(segs))
+
+
+def group_by_hardware(pills: list[Pill]) -> list[Pill]:
+    """Group pills by hardware, in order of first appearance (values keep their pin order)."""
+    order: list[str] = []
+    groups: dict[str, list[Pill]] = {}
+    for p in pills:
+        k = p.hw_id or p.hw_kind
+        if k not in groups:
+            order.append(k)
+            groups[k] = []
+        groups[k].append(p)
+    return [build_group(groups[k]) for k in order]
 
 
 class TaskbarWidget(QWidget):
@@ -332,6 +381,8 @@ class TaskbarWidget(QWidget):
         self._ps = PlacementSettings()
         self._ui_pct = 100
         self._icon_resolver = None          # fn(hw_kind, hw_id, sensor_key) -> file name | None
+        self._grouped = True                # one pill per hardware (several values) instead of one per sensor
+        self._hidden: list[Pill] = []       # sensor pills collapsed into the "+K" pill
         self._all: list[Pill] = []          # every pill (before overflow)
         self._pills: list[Pill] = []        # pills drawn (possibly ending with the "+K" pill)
         self._rects: list[tuple] = []
@@ -388,6 +439,17 @@ class TaskbarWidget(QWidget):
         self._rebuild()
         if self._started:
             self.update_position()
+
+    def set_grouped(self, value: bool) -> None:
+        """One pill per hardware (True) or one pill per pinned sensor (False)."""
+        if bool(value) != self._grouped:
+            self._grouped = bool(value)
+            self._rebuild()
+            if self._started:
+                self.update_position()
+
+    def is_grouped(self) -> bool:
+        return self._grouped
 
     def set_fahrenheit(self, value: bool) -> None:
         if bool(value) != self._fahrenheit:
@@ -481,9 +543,8 @@ class TaskbarWidget(QWidget):
         return list(self._pills)
 
     def hidden_pills(self) -> list[Pill]:
-        """Pills collapsed into the "+K" pill."""
-        shown = sum(1 for p in self._pills if not p.overflow)
-        return self._all[shown:]
+        """Sensor pills collapsed into the "+K" pill."""
+        return list(self._hidden)
 
     def is_compact(self) -> bool:
         return self._compact
@@ -543,6 +604,8 @@ class TaskbarWidget(QWidget):
         stale = is_stale(self._snapshot)
         sep = decimal_sep()
         pills = [build_pill(s, self._fahrenheit, reason, sep, stale) for s in sensors]
+        if pills and self._grouped:
+            pills = group_by_hardware(pills)
         if not pills:
             tip = empty_tooltip(self._pinned, self._snapshot)
             pills = [Pill(EMPTY_KEY, "cpu", "", "—", tip, a11y=tip, stale=stale)]
@@ -591,18 +654,35 @@ class TaskbarWidget(QWidget):
         """False for style "none" without a custom image: no icon and no gap."""
         return icons_visible() or self._custom_file(pill) is not None
 
+    def _seg_gap(self, compact: bool) -> int:
+        return max(5, round((SEG_GAP_COMPACT if compact else SEG_GAP) * self._pill_scale))
+
+    @staticmethod
+    def _seg_widths(p: Pill, fm: QFontMetrics) -> list[int]:
+        """Width of each value of a grouped pill (stable: never below the widest usual text of its kind)."""
+        return [max(fm.horizontalAdvance(s.text), fm.horizontalAdvance(s.reserve)) for s in p.segments]
+
     def _pill_w(self, p: Pill, fm: QFontMetrics, compact: bool) -> int:
-        text_w = max(fm.horizontalAdvance(p.text), fm.horizontalAdvance(p.reserve))
         pad = self._pad(compact)
+        if p.segments:
+            widths = self._seg_widths(p, fm)
+            # a column puts one value per line (the widest one sets the width); a row puts them side by side
+            text_w = max(widths) if self._vertical else sum(widths) + self._seg_gap(compact) * (len(widths) - 1)
+        else:
+            text_w = max(fm.horizontalAdvance(p.text), fm.horizontalAdvance(p.reserve))
         if p.overflow:
             return 2 * pad + text_w
         if not self._has_icon(p):
             return pill_width(text_w, 0, 0, pad, 0)
         return pill_width(text_w, self._icon_size(), 0, pad, self._gap(compact))
 
+    def _pill_ext(self, p: Pill) -> int:
+        """Height of a pill in a column: a grouped pill has one line per value."""
+        return self._pill_h * max(1, len(p.segments))
+
     def _overflow_pill(self, hidden: list[Pill]) -> Pill:
         lines = [f"{p.a11y}" for p in hidden]
-        tip = tr("pill_more", n=len(hidden)) + "\n" + "\n".join(lines)
+        tip = tr("pill_more", n=len(hidden)) + NEWLINE + NEWLINE.join(lines)
         return Pill(OVERFLOW_KEY, "", "", f"+{len(hidden)}", tip, a11y=tip, overflow=True,
                     stale=any(p.stale for p in hidden))
 
@@ -611,21 +691,46 @@ class TaskbarWidget(QWidget):
         allp = self._all
         full = [self._pill_w(p, fm, False) for p in allp]
         compact = [self._pill_w(p, fm, True) for p in allp]
-        probe = Pill(OVERFLOW_KEY, "", "", f"+{len(allp)}", "", overflow=True)
+        total = sum(len(p.segments) or 1 for p in allp)
+        probe = Pill(OVERFLOW_KEY, "", "", f"+{total}", "", overflow=True)
         if self._vertical:      # a column: the main axis is the pill height, widths do not matter
-            ext = [self._pill_h] * len(allp)
+            ext = [self._pill_ext(p) for p in allp]
             comp, count = False, fit_count(ext, self._limit, self._pill_h)
+            ov_ext = self._pill_h
         else:
             comp, count = fit_pills(full, compact, self._limit, self._pill_w(probe, fm, True))
+            ov_ext = self._pill_w(probe, fm, True)
         shown = allp[:count]
         widths = list((compact if comp else full)[:count])
-        if count < len(allp):
-            ov = self._overflow_pill(allp[count:])
-            shown = shown + [ov]
+        heights = [self._pill_ext(p) for p in shown]
+        hidden = [s for p in allp[count:] for s in (p.segments or [p])]
+        if self._limit is not None and count == 1 and len(shown[0].segments) > 1:
+            # a lone group that does not fit: keep the leading values that do (never a half group otherwise)
+            g = shown[0]
+            segs = list(g.segments)
+            more = count < len(allp)
+
+            def extent(gr: Pill) -> int:
+                return self._pill_ext(gr) if self._vertical else self._pill_w(gr, fm, comp)
+
+            while len(segs) > 1 and total_extent(
+                    [extent(build_group(segs))] + ([ov_ext] if more or len(segs) < len(g.segments) else []),
+                    ) > self._limit:
+                segs.pop()
+            if len(segs) < len(g.segments):
+                hidden = g.segments[len(segs):] + hidden
+                trimmed = build_group(segs)
+                shown, widths, heights = [trimmed], [self._pill_w(trimmed, fm, comp)], [self._pill_ext(trimmed)]
+        shown = list(shown)
+        if hidden:
+            ov = self._overflow_pill(hidden)
+            shown.append(ov)
             widths.append(self._pill_w(ov, fm, comp))
+            heights.append(self._pill_h)
         self._compact = comp
         self._pills = shown
-        self._rects, (tw, th) = layout_pills(widths, self._pill_h, self._vertical)
+        self._hidden = hidden
+        self._rects, (tw, th) = layout_pills(widths, self._pill_h, self._vertical, heights=heights)
         size = QSize(max(tw, 1), max(th, 1))
         if size != self.size():
             self.setFixedSize(size)
@@ -954,6 +1059,41 @@ class TaskbarWidget(QWidget):
             return fg                   # neutral kinds (clock, power, ...): plain text colour
         return band_color(pill.band, dark)
 
+    def _paint_bar(self, p: QPainter, color: QColor, pill: Pill, bx: float, y: float, bw: float, h: float) -> None:
+        """Thin level bar at the bottom of a pill (or of one line); dropped in compact mode / short pills."""
+        if pill.frac is None or h < BAR_MIN_PILL_H or self._compact:
+            return
+        by = y + h - 5.0
+        track = QColor(color)
+        track.setAlpha(55 if not pill.stale else 35)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(track)
+        p.drawRoundedRect(QRectF(bx, by, bw, BAR_H), BAR_H / 2, BAR_H / 2)
+        p.setBrush(color)
+        p.drawRoundedRect(QRectF(bx, by, max(BAR_H, bw * pill.frac), BAR_H), BAR_H / 2, BAR_H / 2)
+
+    def _paint_segments(self, p: QPainter, pill: Pill, x: float, y: float, w: float, tx: float, row_h: float,
+                        pad: int, fg: QColor, dark: bool) -> None:
+        """Values of a grouped pill: side by side in a row, one per line in a column; each with its own
+        band colour and its own thin bar under it."""
+        widths = self._seg_widths(pill, QFontMetrics(self._font()))
+        gap = self._seg_gap(self._compact)
+        sx = tx
+        for n, (seg, sw) in enumerate(zip(pill.segments, widths)):
+            color = QColor(self._text_color(seg, fg, dark))
+            if pill.stale:
+                color.setAlpha(DIM_ALPHA)
+            if self._vertical:
+                sy, area_w = y + n * row_h, w - (tx - x) - pad
+                rect = QRectF(tx, sy, area_w, row_h)
+            else:
+                sy, area_w = y, sw
+                rect = QRectF(sx, sy, sw, row_h)
+            p.setPen(color)
+            p.drawText(rect, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter), seg.text)
+            self._paint_bar(p, color, replace(seg, stale=pill.stale), rect.x(), sy, area_w, row_h)
+            sx += sw + gap
+
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -976,6 +1116,7 @@ class TaskbarWidget(QWidget):
         gap = self._gap(self._compact)
         for i, (pill, (x, y, w, h)) in enumerate(zip(self._pills, self._rects)):
             r = QRectF(x, y, w, h)
+            rad = min(h, self._pill_h) / 2.5
             color = QColor(self._text_color(pill, fg, dark))
             icon_color = QColor(fg)
             if pill.stale:
@@ -986,13 +1127,13 @@ class TaskbarWidget(QWidget):
                              dark)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(fill)
-            p.drawRoundedRect(r, h / 2.5, h / 2.5)
+            p.drawRoundedRect(r, rad, rad)
             if pill.alert:      # non-colour cues for "critical": 1 px outline and the "!" in the text
                 pen = QPen(color)
                 pen.setWidthF(1.0)
                 p.setPen(pen)
                 p.setBrush(Qt.BrushStyle.NoBrush)
-                p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), h / 2.5, h / 2.5)
+                p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), rad, rad)
             if pill.overflow:
                 p.setPen(color)
                 p.drawText(r, int(Qt.AlignmentFlag.AlignCenter), pill.text)
@@ -1000,25 +1141,22 @@ class TaskbarWidget(QWidget):
             custom = self._custom_file(pill)
             ix = x + pad
             tx = ix
+            row_h = self._pill_h if pill.segments and self._vertical else h
             if custom is not None or icons_visible():
-                ir = QRectF(ix, y + (h - icon) / 2, icon, icon)
+                ir = QRectF(ix, y + (row_h - icon) / 2, icon, icon)
                 drawn = custom is not None and custom_icons.draw_custom_icon(p, ir, custom, icon_color.alphaF())
                 if not drawn:
                     draw_kind_icon(p, pill.hw_kind, ir, icon_color)
                 tx = ix + icon + gap
+            if pill.segments:
+                self._paint_segments(p, pill, x, y, w, tx, row_h, pad, fg, dark)
+                continue
             p.setPen(color)
             p.drawText(QRectF(tx, y, w - (tx - x) - pad, h),
                        int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter), pill.text)
-            if pill.frac is not None and h >= BAR_MIN_PILL_H and not self._compact:
-                bw = w - 2 * pad
-                by = y + h - 5.0
-                track = QColor(color)
-                track.setAlpha(55 if not pill.stale else 35)
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(track)
-                p.drawRoundedRect(QRectF(x + pad, by, bw, BAR_H), BAR_H / 2, BAR_H / 2)
-                p.setBrush(color)
-                p.drawRoundedRect(QRectF(x + pad, by, max(BAR_H, bw * pill.frac), BAR_H), BAR_H / 2, BAR_H / 2)
+            if pill.frac is not None:
+                self._paint_bar(p, color, pill, x + pad, y, w - 2 * pad, h)
+
         p.end()
 
     # ------------------------------------------------------------------ interaction

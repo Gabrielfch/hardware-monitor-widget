@@ -370,13 +370,15 @@ class SettingsActions:
 
     # ---- display
     def get_bool(self, key: str) -> bool:
-        return bool(self.cfg.get(key)) if key in ("fahrenheit", "show_in_fullscreen") else False
+        return bool(self.cfg.get(key)) if key in ("fahrenheit", "show_in_fullscreen", "group_pills") else False
 
     def set_bool(self, key: str, value: bool) -> None:
         if key == "fahrenheit":
             self.ctl.set_fahrenheit(bool(value))
         elif key == "show_in_fullscreen" and self._set(key, bool(value)):
             self.ctl.placement_changed()
+        elif key == "group_pills" and self._set(key, bool(value)):
+            self.ctl.widget.set_grouped(bool(value))
 
     def list_hardware(self) -> list:
         """[(hw_id, name, hw_class)] of the hardware that has (or could have) summary sensors."""

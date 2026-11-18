@@ -410,3 +410,14 @@ def test_icon_cleanup_skipped_when_config_not_loaded_ok(ctl, monkeypatch):
     ctl.cfg.loaded_ok = True
     ctl.actions._cleanup_icons()
     assert called
+
+
+def test_group_pills_toggle_persists_and_applies_live(ctl):
+    a = ctl.actions
+    assert a.get_bool("group_pills") is True and ctl.widget.is_grouped()
+    a.set_bool("group_pills", False)
+    assert ctl.cfg.get("group_pills") is False and not ctl.widget.is_grouped()
+    saved = json.loads(Path(ctl.cfg.path).read_text(encoding="utf-8"))
+    assert saved["group_pills"] is False
+    a.set_bool("group_pills", True)
+    assert ctl.widget.is_grouped()

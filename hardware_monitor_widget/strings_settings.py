@@ -37,6 +37,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "set_panel_size_normal": "Normal",
         "set_panel_size_large": "Large",
         "set_ui_scale": "Interface scale",
+        "set_group_pills": "Group pills by component",
+        "set_group_pills_tip": "One pill per hardware with all its pinned values, more compact",
         "set_language": "Language",
         "set_lang_auto": "Automatic (system)",
         # position
@@ -111,6 +113,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "set_panel_size_normal": "Normal",
         "set_panel_size_large": "Grande",
         "set_ui_scale": "Escala de la interfaz",
+        "set_group_pills": "Agrupar píldoras por componente",
+        "set_group_pills_tip": "Una píldora por componente con todos sus valores fijados, más compacta",
         "set_language": "Idioma",
         "set_lang_auto": "Automático (sistema)",
         # position

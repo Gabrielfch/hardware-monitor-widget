@@ -19,7 +19,7 @@ class State:
         self.d = {"theme": "auto", "palette": "classic", "icon_style": "outline", "panel_size": "normal",
                   "ui_scale": 100, "language": "auto", "placement": "right", "anchor": "bottom-right",
                   "monitor": "primary", "fs": "same", "log_debug": False, "startup": False,
-                  "update_auto": False, "bools": {"fahrenheit": False, "show_in_fullscreen": False},
+                  "update_auto": False, "bools": {"fahrenheit": False, "show_in_fullscreen": False, "group_pills": True},
                   "hidden": set(), "cats": {c: True for c in SUMMARY_CATEGORIES}, "overrides": False,
                   "update_state": ("idle", ""), "can_install": False, "tech": "Version: 1.0\nMode: portable"}
         self.hardware = [("hw/cpu/0", "AMD Ryzen", "cpu"), ("hw/gpu/0", "NVIDIA RTX", "gpu")]
@@ -107,7 +107,7 @@ def test_root_order_matches_the_design(m):
 
 def test_pages_content(m):
     assert ids(m.find("personalization")) == ["theme", "palette", "custom_colors", "icon_style", "panel_size",
-                                              "ui_scale", "language"]
+                                              "ui_scale", "group_pills", "language"]
     assert ids(m.find("position")) == ["placement", "float_anchor", "monitor", "show_in_fullscreen",
                                        "fullscreen_placement", "position_sep", "reset_position"]
     assert ids(m.find("custom_icons")) == ["manage_icons", "clear_icons"]

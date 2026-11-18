@@ -218,3 +218,17 @@ def test_deeply_nested_json_does_not_crash(tmp_path):
     p = tmp_path / "config.json"
     p.write_text("[" * 50000 + "]" * 50000, encoding="utf-8")
     assert Config(p).get("fahrenheit") is False
+
+
+def test_group_pills_default_true_validates_and_persists(tmp_path):
+    import pytest
+    p = tmp_path / "config.json"
+    _write(p, {"theme": "dark"})                  # an older file without the key
+    c = Config(p)
+    assert c.get("group_pills") is True
+    c.set("group_pills", False)
+    assert Config(p).get("group_pills") is False
+    with pytest.raises(ValueError):
+        c.set("group_pills", "yes")
+    _write(p, {"group_pills": "garbage"})
+    assert Config(p).get("group_pills") is True    # invalid value falls back to the default

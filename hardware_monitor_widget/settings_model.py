@@ -338,6 +338,7 @@ def build_settings_model(cb: SettingsCallbacks | None = None) -> SettingsModel:
         Choice(id="ui_scale", label_key="set_ui_scale",
                options=static_options(UI_SCALES, lambda n: f"{n} %"),
                get=lambda: _safe(cb.get_ui_scale, 100), set=lambda v: cb.set_ui_scale(int(v))),
+        bool_toggle("group_pills", "set_group_pills", "set_group_pills_tip"),
         Choice(id="language", label_key="set_language", options=language_options,
                get=lambda: _safe(cb.get_language, "auto"), set=lambda v: cb.set_language(str(v))),
     ])
