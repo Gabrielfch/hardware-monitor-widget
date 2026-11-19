@@ -12,6 +12,21 @@ def qapp():
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
     yield app
+    # Tear Qt down deterministically while the interpreter is still alive: widgets leaked by tests being
+    # destroyed during interpreter finalization intermittently crashed the process (0xC0000409) after a
+    # fully green run.
+    import gc
+    import threading
+    from PySide6.QtCore import QCoreApplication, QEvent
+    for t in threading.enumerate():
+        if t.daemon and t.name in ("hmw-update", "svg-render"):
+            t.join(2.0)
+    for w in app.topLevelWidgets():
+        w.close()
+        w.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    gc.collect()
 
 
 @pytest.fixture(autouse=True)
