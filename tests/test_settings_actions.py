@@ -237,6 +237,8 @@ def test_settings_model_pages_render_with_real_callbacks(ctl):
 def test_updates_disabled_means_no_network(ctl, monkeypatch):
     calls = []
     monkeypatch.setattr(updater, "fetch_latest", lambda *a, **k: calls.append(1))
+    monkeypatch.setattr(release_info, "PUBLIC_KEYS", ())    # a build without embedded keys
+    monkeypatch.setattr(updater, "PUBLIC_KEYS", ())
     assert not release_info.is_configured()
     ctl.updates.check_now()
     ctl.updates.start_auto()
