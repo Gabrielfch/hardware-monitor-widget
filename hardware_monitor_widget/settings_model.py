@@ -13,7 +13,7 @@ from typing import Callable
 
 from . import release_info
 from .colors import PALETTES
-from .config import FLOATING_ANCHORS, FULLSCREEN_PLACEMENTS, ICON_STYLES, LANGUAGE_CHOICES, PANEL_SIZES, THEMES, UI_SCALES
+from .config import FLOATING_ANCHORS, FULLSCREEN_PLACEMENTS, ICON_STYLES, LANGUAGE_CHOICES, PANEL_SIZES, PILL_STYLES, THEMES, UI_SCALES
 from .curation import SUMMARY_CATEGORIES
 from .i18n import LANGUAGES as I18N_LANGUAGES, tr
 
@@ -50,6 +50,8 @@ class SettingsCallbacks:
     set_icon_style: Callable[[str], None] = lambda style: None
     get_panel_size: Callable[[], str] = lambda: "normal"            # one of config.PANEL_SIZES
     set_panel_size: Callable[[str], None] = lambda size: None
+    get_pill_style: Callable[[], str] = lambda: "transparent"       # one of config.PILL_STYLES
+    set_pill_style: Callable[[str], None] = lambda style: None
     get_ui_scale: Callable[[], int] = lambda: 100                   # one of config.UI_SCALES
     set_ui_scale: Callable[[int], None] = lambda pct: None
     get_language: Callable[[], str] = lambda: "auto"                # one of config.LANGUAGE_CHOICES
@@ -339,6 +341,15 @@ def build_settings_model(cb: SettingsCallbacks | None = None) -> SettingsModel:
                options=static_options(UI_SCALES, lambda n: f"{n} %"),
                get=lambda: _safe(cb.get_ui_scale, 100), set=lambda v: cb.set_ui_scale(int(v))),
         bool_toggle("group_pills", "set_group_pills", "set_group_pills_tip"),
+        Choice(id="pill_style", label_key="set_pill_style",
+               options=static_options(PILL_STYLES, lambda n: tr("set_pill_style_" + n)),
+               get=lambda: _safe(cb.get_pill_style, "transparent"), set=lambda v: cb.set_pill_style(str(v))),
+        bool_toggle("pill_labels", "set_pill_labels", "set_pill_labels_tip"),
+        bool_toggle("pill_bars", "set_pill_bars", "set_pill_bars_tip"),
+        Toggle(id="stack_pills", label_key="set_stack_pills", tip_key="set_stack_pills_tip",
+               get=lambda: bool(_safe(lambda: cb.get_bool("stack_pills"), False)),
+               set=lambda v: cb.set_bool("stack_pills", bool(v)),
+               enabled=lambda: _safe(cb.get_placement, "right") == "floating"),
         Choice(id="language", label_key="set_language", options=language_options,
                get=lambda: _safe(cb.get_language, "auto"), set=lambda v: cb.set_language(str(v))),
     ])

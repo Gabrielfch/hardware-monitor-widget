@@ -299,6 +299,9 @@ class UpdateController(QObject):
 
 
 # ======================================================================= settings
+BOOL_KEYS = ("fahrenheit", "show_in_fullscreen", "group_pills", "pill_labels", "pill_bars", "stack_pills")
+
+
 class SettingsActions:
     """`ctl` is the Controller: it owns `cfg`, `widget`, `panel`, `snapshot`, `monitor`, and the apply hooks
     (`prefs_changed`, `appearance_changed`, `metrics_changed`, `language_changed`, `placement_changed`,
@@ -348,6 +351,7 @@ class SettingsActions:
             open_custom_colors=self.open_custom_colors,
             get_icon_style=lambda: self.cfg.get("icon_style"), set_icon_style=self.set_icon_style,
             get_panel_size=lambda: self.cfg.get("panel_size"), set_panel_size=self.set_panel_size,
+            get_pill_style=lambda: self.cfg.get("pill_style"), set_pill_style=self.set_pill_style,
             get_ui_scale=lambda: self.cfg.get("ui_scale"), set_ui_scale=self.set_ui_scale,
             get_language=lambda: self.cfg.get("language"), set_language=self.set_language,
             get_placement=self.get_placement, set_placement=self.set_placement,
@@ -370,7 +374,7 @@ class SettingsActions:
 
     # ---- display
     def get_bool(self, key: str) -> bool:
-        return bool(self.cfg.get(key)) if key in ("fahrenheit", "show_in_fullscreen", "group_pills") else False
+        return bool(self.cfg.get(key)) if key in BOOL_KEYS else False
 
     def set_bool(self, key: str, value: bool) -> None:
         if key == "fahrenheit":
@@ -379,6 +383,16 @@ class SettingsActions:
             self.ctl.placement_changed()
         elif key == "group_pills" and self._set(key, bool(value)):
             self.ctl.widget.set_grouped(bool(value))
+        elif key == "pill_labels" and self._set(key, bool(value)):
+            self.ctl.widget.set_pill_labels(bool(value))
+        elif key == "pill_bars" and self._set(key, bool(value)):
+            self.ctl.widget.set_pill_bars(bool(value))
+        elif key == "stack_pills" and self._set(key, bool(value)):
+            self.ctl.widget.set_stacked(bool(value))
+
+    def set_pill_style(self, style: str) -> None:
+        if self._set("pill_style", style):
+            self.ctl.widget.set_pill_style(style)
 
     def list_hardware(self) -> list:
         """[(hw_id, name, hw_class)] of the hardware that has (or could have) summary sensors."""

@@ -197,6 +197,59 @@ def shot_pills(path: Path, grouped: bool = True) -> None:
     out.save(str(path))
 
 
+def shot_styles(path: Path, dark: bool = True) -> None:
+    """The four pill styles (classic, soft, transparent, compact), the last two with abbreviations too, with
+    a critical CPU temperature so the red value with "!" shows."""
+    rows = []
+    for title, style, labels in (("A  classic", "classic", False), ("B  soft", "soft", False),
+                                 ("C  transparent (default)", "transparent", False),
+                                 ("C  transparent + abbreviations", "transparent", True),
+                                 ("D  compact", "compact", False), ("D  compact + abbreviations", "compact", True)):
+        w = TaskbarWidget(list(DEFAULTS["pinned"]) + ["hw//gpu-amd/0/temperature/1"])
+        w.set_pill_style(style)
+        w.set_pill_labels(labels)
+        w.set_light_theme(not dark)
+        w.set_snapshot(make_snapshot(cpu_temp=92.0))
+        w.show()
+        QApplication.processEvents()
+        rows.append((title, w.grab()))
+        w.close()
+    stack_rows(rows, path, dark=dark, scale=1)
+
+
+def shot_stacked(path: Path) -> None:
+    """Floating bar with one component per row (values in aligned columns), icons and abbreviations."""
+    rows = []
+    for title, labels in (("stacked, icons", False), ("stacked, abbreviations", True)):
+        w = TaskbarWidget(list(DEFAULTS["pinned"]) + ["hw//gpu-amd/0/temperature/1", "hw//nvme/0/temperature/0"])
+        w.set_pill_labels(labels)
+        w.set_light_theme(False)
+        w.set_stacked(True)
+        w._set_floating(True)       # as placed in floating mode (the offscreen run has no placement)
+        w.set_snapshot(make_snapshot(cpu_temp=62.0))
+        w.show()
+        QApplication.processEvents()
+        rows.append((title, w.grab()))
+        w.close()
+    pad = 16
+    width = sum(pm.width() for _t, pm in rows) + pad * (len(rows) + 1)
+    height = max(pm.height() for _t, pm in rows) + 2 * pad + 24
+    out = QPixmap(width, height)
+    out.fill(QColor(120, 130, 150))
+    qp = QPainter(out)
+    x = pad
+    for title, pm in rows:
+        qp.setPen(QColor(255, 255, 255))
+        f = QFont("Segoe UI")
+        f.setPixelSize(13)
+        qp.setFont(f)
+        qp.drawText(x, pad + 12, title)
+        qp.drawPixmap(x, pad + 24, pm)
+        x += pm.width() + pad
+    qp.end()
+    out.save(str(path))
+
+
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     i18n.set_language("es")
@@ -221,6 +274,9 @@ def main() -> int:
     shot_pills(OUT / "pills.png")
     shot_pills(OUT / "pills-ungrouped.png", grouped=False)
     shot_overflow(OUT / "pills-overflow.png")
+    shot_styles(OUT / "pills-styles.png")
+    shot_styles(OUT / "pills-styles-light.png", dark=False)
+    shot_stacked(OUT / "pills-stacked.png")
     shot_icons_dpr(OUT / "icons-dpr.png")
     print("saved:", ", ".join(sorted(p.name for p in OUT.glob("*.png"))))
     return 0
