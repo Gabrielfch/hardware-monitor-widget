@@ -61,4 +61,5 @@ def tr(key: str, lang: str | None = None) -> str:
             lang = i18n.get_language()
         except Exception:
             lang = "en"
-    return STRINGS.get(lang, STRINGS["en"]).get(key) or STRINGS["en"].get(key, key)
+    from . import i18n
+    return STRINGS.get(lang, {}).get(key) or i18n.tr_in(lang, key)

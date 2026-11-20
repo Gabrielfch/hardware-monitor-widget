@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: Gabrielfch.HardwareMonitorWidget
+PackageVersion: 0.2.0
+PackageLocale: en-US
+Publisher: Gabrielfch
+PublisherUrl: https://github.com/Gabrielfch
+PublisherSupportUrl: https://github.com/Gabrielfch/hardware-monitor-widget/issues
+PackageName: Hardware Monitor Widget
+PackageUrl: https://github.com/Gabrielfch/hardware-monitor-widget
+License: MIT
+LicenseUrl: https://github.com/Gabrielfch/hardware-monitor-widget/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Gabrielfch
+ShortDescription: Windows 11 taskbar widget that shows PC temperatures, loads, fans, clocks, power, memory and disks.
+Description: Hardware Monitor Widget shows the temperatures, loads, fans, clocks, power, memory and disks of your PC next to the notification area of the Windows 11 taskbar. It bundles its own sensor engine (based on LibreHardwareMonitorLib), so no other monitoring app is needed.
+Tags:
+- hardware
+- monitor
+- sensors
+- taskbar
+- temperature
+ReleaseNotesUrl: https://github.com/Gabrielfch/hardware-monitor-widget/releases/tag/v0.2.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

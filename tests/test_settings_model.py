@@ -132,8 +132,9 @@ def test_choice_values_match_constants(m):
     assert [o.value for o in m.find("theme").options()] == ["auto", "light", "dark"]
     assert [o.value for o in m.find("panel_size").options()] == ["compact", "normal", "large"]
     assert [o.value for o in m.find("ui_scale").options()] == [90, 100, 115, 130]
-    assert [o.value for o in m.find("language").options()] == ["auto", "es", "en"]
-    assert [o.label for o in m.find("language").options()] == ["Automatic (system)", "Español", "English"]
+    assert [o.value for o in m.find("language").options()] == ["auto", "es", "en", "pt", "fr", "ru", "zh", "ja"]
+    assert [o.label for o in m.find("language").options()] == [
+        "Automatic (system)", "Español", "English", "Português (Brasil)", "Français", "Русский", "简体中文", "日本語"]
     assert m.find("palette").options()[-1].value == "custom"
 
 

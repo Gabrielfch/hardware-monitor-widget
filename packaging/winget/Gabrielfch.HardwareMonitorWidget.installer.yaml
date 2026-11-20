@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: Gabrielfch.HardwareMonitorWidget
+PackageVersion: 0.2.0
+InstallerType: inno
+Scope: machine
+ElevationRequirement: elevatesSelf
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/Gabrielfch/hardware-monitor-widget/releases/download/v0.2.0/HardwareMonitorWidget-Setup-0.2.0.exe
+  InstallerSha256: 05CABD004EC22536C22B33AA421E31F3EC3143F76D56D70D424F2AF5C4FEC2DA
+ManifestType: installer
+ManifestVersion: 1.6.0

@@ -1,0 +1,76 @@
+name: Hardware report
+description: My hardware does not appear, or a sensor shows a wrong value
+labels: ["hardware"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when a component or sensor is missing, or when a value looks wrong.
+        Open *Settings > About > Copy technical info* in the app and paste the result below.
+        Please do not paste personal data (serial numbers, user names, licence keys).
+  - type: input
+    id: model
+    attributes:
+      label: Hardware model
+      description: "The affected component, for example CPU, GPU, motherboard, SSD or fan controller."
+      placeholder: "AMD Ryzen 7 5800X / ASUS TUF B550-PLUS"
+    validations:
+      required: true
+  - type: dropdown
+    id: problem
+    attributes:
+      label: Problem
+      options:
+        - The hardware does not appear
+        - A sensor is missing
+        - A sensor shows a wrong value
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+  - type: dropdown
+    id: admin
+    attributes:
+      label: Running as administrator?
+      options:
+        - "Yes"
+        - "No"
+        - I do not know
+    validations:
+      required: true
+  - type: dropdown
+    id: pawnio
+    attributes:
+      label: PawnIO driver installed?
+      options:
+        - "Yes"
+        - "No"
+        - I do not know
+    validations:
+      required: true
+  - type: textarea
+    id: technical
+    attributes:
+      label: Technical info
+      description: "Paste the text copied with *Settings > About > Copy technical info*."
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details (optional)
+      description: "What you see, what you expected, and the value shown by another tool if you compared it."

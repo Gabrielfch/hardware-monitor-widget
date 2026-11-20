@@ -1,4 +1,4 @@
-"""Tiny translation table (Spanish when the system locale starts with "es", otherwise English)."""
+"""Tiny translation table (seven languages; the system locale picks one, English by default)."""
 from __future__ import annotations
 
 import locale
@@ -155,8 +155,10 @@ _STRINGS: dict[str, dict[str, str]] = {
     },
 }
 
-LANGUAGES = {"es": "Español", "en": "English"}
+LANGUAGES = {"es": "Español", "en": "English", "pt": "Português (Brasil)", "fr": "Français",
+             "ru": "Русский", "zh": "简体中文", "ja": "日本語"}
 SETTING_AUTO = "auto"
+DECIMAL_COMMA = ("es", "pt", "fr", "ru")
 
 # Text tables of other features (ADR-4). Each module exposes STRINGS = {"es": {...}, "en": {...}}.
 # Static imports so PyInstaller finds them; modules that do not exist yet are skipped.
@@ -165,9 +167,16 @@ EXTENSION_MODULES = ("strings_appearance", "strings_icons", "strings_update", "s
                      "strings_about")
 
 
+# Machine-translated languages: one module each with a complete table (all keys of the modules above).
+TRANSLATION_MODULES = ("strings_pt", "strings_fr", "strings_ru", "strings_zh", "strings_ja")
+MACHINE_TRANSLATED = ("pt", "fr", "ru", "zh", "ja")
+for _code in MACHINE_TRANSLATED:
+    _STRINGS[_code] = {}
+
+
 def _merge_extensions() -> None:
     import importlib
-    for name in EXTENSION_MODULES:
+    for name in EXTENSION_MODULES + TRANSLATION_MODULES:
         try:
             mod = importlib.import_module(f"{__package__}.{name}")
         except ImportError:
@@ -209,11 +218,21 @@ def _static_imports() -> None:   # pragma: no cover - only makes PyInstaller col
         from . import strings_integration  # noqa: F401
     except ImportError:
         pass
+    try:
+        from . import strings_about, strings_pt, strings_fr, strings_ru, strings_zh, strings_ja  # noqa: F401
+    except ImportError:
+        pass
 
 
 _merge_extensions()
 
 _lang: str | None = None
+
+
+def language_from_locale(loc: str) -> str:
+    """Map a Windows/POSIX locale name ("pt-BR", "zh_CN", "ja-JP"...) to a supported language code."""
+    code = (loc or "").lower().replace("_", "-").split("-")[0]
+    return code if code in LANGUAGES else "en"
 
 
 def system_language() -> str:
@@ -228,7 +247,7 @@ def system_language() -> str:
             loc = locale.getlocale()[0] or ""
     except Exception:  # noqa: BLE001
         loc = ""
-    return "es" if loc.lower().startswith("es") else "en"
+    return language_from_locale(loc)
 
 
 def get_language() -> str:
@@ -239,7 +258,7 @@ def get_language() -> str:
 
 
 def set_language(lang: str | None) -> None:
-    """Force "es"/"en" (None re-detects from the system locale)."""
+    """Force a supported language code (None re-detects from the system locale)."""
     global _lang
     _lang = lang if lang in _STRINGS else None
 
@@ -251,8 +270,8 @@ def tr_in(lang: str, key: str, **kw) -> str:
 
 
 def decimal_sep() -> str:
-    """Decimal separator of the UI language: comma in Spanish, point otherwise."""
-    return "," if get_language() == "es" else "."
+    """Decimal separator of the UI language: comma in es/pt/fr/ru, point otherwise."""
+    return "," if get_language() in DECIMAL_COMMA else "."
 
 
 def tr(key: str, **kw) -> str:
@@ -260,5 +279,5 @@ def tr(key: str, **kw) -> str:
 
 
 def apply_language_setting(pref: str | None) -> None:
-    """Apply the `language` config value: "es"/"en" force it, anything else ("auto") follows the system."""
+    """Apply the `language` config value: a supported code forces it, anything else ("auto") follows the system."""
     set_language(pref if pref in LANGUAGES else None)
