@@ -771,6 +771,7 @@ def test_grouped_width_is_stable_across_digits(gwidget):
 
 
 def test_grouped_overflow_never_splits_a_group_that_fits(gwidget):
+    gwidget.set_pill_style("classic")
     gwidget.set_snapshot(make_snapshot())
     full = gwidget.width()
     first = gwidget._rects[0][2]
@@ -851,3 +852,179 @@ def test_set_grouped_toggles_live_and_back(gwidget):
     assert len(gwidget.pills()) == 5 and not gwidget.is_grouped()
     gwidget.set_grouped(True)
     assert len(gwidget.pills()) == 3
+
+
+# ------------------------------------------------------------------ pill styles, labels, bars, stacking
+def _full_rects(wd):
+    return [tuple(r) for r in wd._rects]
+
+
+def test_pill_style_default_is_transparent_and_unknown_is_ignored(gwidget):
+    assert gwidget.pill_style() == "transparent"
+    gwidget.set_pill_style("bogus")
+    assert gwidget.pill_style() == "transparent"
+
+
+def _painted_alpha(wd, x, y):
+    img = wd.grab().toImage()
+    return img.pixelColor(x, y).alpha()
+
+
+def test_styles_paint_background_only_for_classic_and_soft(gwidget):
+    gwidget.set_light_theme(False)
+    gwidget.set_snapshot(make_snapshot(cpu_temp=40.0))
+    alphas = {}
+    for style in ("classic", "soft", "transparent", "compact"):
+        gwidget.set_pill_style(style)
+        x, y, w, h = gwidget._rects[0]
+        alphas[style] = _painted_alpha(gwidget, int(x + 1), int(y + h / 2))   # inside the padding, no content
+    assert alphas["classic"] > alphas["soft"] > 0
+    assert alphas["transparent"] == 0 and alphas["compact"] == 0
+
+
+def test_compact_style_is_narrower_and_never_draws_bars(gwidget):
+    gwidget.set_snapshot(make_snapshot())
+    gwidget.set_pill_style("transparent")
+    wide = gwidget.width()
+    assert gwidget.pill_bars()
+    gwidget.set_pill_style("compact")
+    assert gwidget.width() < wide and not gwidget.pill_bars()
+    gwidget.set_pill_bars(True)
+    assert not gwidget.pill_bars()          # compact hides them whatever the switch says
+    gwidget.set_pill_style("transparent")
+    gwidget.set_pill_bars(False)
+    assert not gwidget.pill_bars()
+    gwidget.grab()
+
+
+def test_bars_switch_changes_the_painted_pixels(gwidget):
+    gwidget.set_light_theme(False)
+    gwidget.set_snapshot(make_snapshot(cpu_temp=70.0))
+    on = gwidget.grab().toImage()
+    gwidget.set_pill_bars(False)
+    off = gwidget.grab().toImage()
+    assert on != off
+
+
+def test_transparent_draws_separator_between_pills_and_classic_does_not(gwidget):
+    gwidget.set_light_theme(False)
+    gwidget.set_snapshot(make_snapshot())
+    gwidget.set_pill_style("transparent")
+    x, y, w, h = gwidget._rects[0]
+    lx = int(x + w + gwidget._spacing() / 2)
+    assert _painted_alpha(gwidget, lx, int(y + h / 2)) > 0
+    gwidget.set_pill_style("classic")
+    x, y, w, h = gwidget._rects[0]
+    assert _painted_alpha(gwidget, int(x + w + 2), int(y + h / 2)) == 0
+
+
+def test_critical_in_transparent_styles_is_red_with_exclamation_and_no_outline(gwidget):
+    gwidget.set_light_theme(False)
+    gwidget.set_snapshot(make_snapshot(cpu_temp=95.0))
+    seg = gwidget.pills()[0].segments[0]
+    assert seg.alert and seg.text.startswith("!") and seg.band == "red"
+    for style in ("transparent", "compact"):
+        gwidget.set_pill_style(style)
+        x, y, w, h = gwidget._rects[0]
+        assert _painted_alpha(gwidget, int(x + 1), int(y + 1)) == 0      # no outline / fill at the edge
+    gwidget.grab()
+
+
+@pytest.mark.parametrize("light", [True, False])
+@pytest.mark.parametrize("grouped", [True, False])
+@pytest.mark.parametrize("style", ["classic", "soft", "transparent", "compact"])
+def test_every_style_paints_on_light_and_dark_grouped_or_not(qapp, style, grouped, light):
+    w = TaskbarWidget(list(DEFAULTS["pinned"]))
+    w.set_grouped(grouped)
+    w.set_pill_style(style)
+    w.set_light_theme(light)
+    w.set_snapshot(make_snapshot(cpu_temp=95.0))
+    img = w.grab().toImage()
+    assert img.width() >= w.width() > 0
+    w.close()
+
+
+def test_labels_replace_icons_and_change_the_width(gwidget, icon_style):
+    gwidget.set_snapshot(make_snapshot())
+    assert [p.label for p in gwidget.pills()] == ["CPU", "GPU", "RAM"]
+    assert not gwidget.pill_labels()
+    icon_only = gwidget.width()
+    gwidget.set_pill_labels(True)
+    assert gwidget.pill_labels() and gwidget.width() != icon_only
+    gwidget.grab()
+    icon_style("none")
+    gwidget.set_pill_labels(False)
+    no_icon = gwidget.width()
+    gwidget.set_pill_labels(True)
+    assert gwidget.width() > no_icon        # the abbreviation shows even with the icon style "none"
+
+
+def test_label_abbreviations_cover_every_hardware_class():
+    from hardware_monitor_widget.widget import pill_label
+    assert pill_label("hw//amdcpu/0", "cpu") == "CPU"
+    assert pill_label("hw//gpu-amd/0", "gpu") == "GPU"
+    assert pill_label("hw//ram", "ram") == "RAM"
+    assert pill_label("hw//vram", "ram") == "VMEM"
+    assert pill_label("hw//nvme/0", "storage") == "DISK"
+    assert pill_label("hw//nic/0", "network") == "NET"
+    assert pill_label("hw//lpc/x", "mainboard") == "MB"
+
+
+def test_labels_work_ungrouped(widget):
+    widget.set_snapshot(make_snapshot())
+    widget.set_pill_labels(True)
+    assert widget.pills()[0].label == "CPU"
+    widget.grab()
+
+
+def _floating(placed, grouped=True):
+    return placed(settings=PlacementSettings(mode="floating"), grouped=grouped)
+
+
+def test_stacked_floating_one_component_per_row_with_aligned_columns(placed):
+    wd = _floating(placed)
+    n = len(wd.pills())
+    flat_h, flat_w = wd.height(), wd.width()
+    wd.set_stacked(True)
+    assert wd.is_stacked() and len(wd.pills()) == n
+    rects = _full_rects(wd)
+    assert len({r[0] for r in rects}) == 1 and len({r[2] for r in rects}) == 1       # one column of equal rows
+    assert len({r[1] for r in rects}) == n and [r[1] for r in rects] == sorted(r[1] for r in rects)
+    assert wd.height() > flat_h and wd.width() < flat_w
+    wd.grab()
+    wd.set_stacked(False)
+    assert not wd.is_stacked() and wd.height() == flat_h
+
+
+def test_stacked_columns_are_shared_by_all_rows(placed):
+    wd = _floating(placed)
+    wd.set_stacked(True)
+    cols = wd._stack_cols
+    assert len(cols) == max(len(p.segments) for p in wd.pills()) and all(c > 0 for c in cols)
+    wd.set_pill_labels(True)
+    assert wd._stack_lead > 0
+    wd.grab()
+
+
+def test_stacked_ungrouped_and_every_style(placed):
+    wd = _floating(placed, grouped=False)
+    wd.set_stacked(True)
+    assert len(wd.pills()) == 5 and wd.is_stacked()
+    for style in ("classic", "soft", "transparent", "compact"):
+        wd.set_pill_style(style)
+        wd.grab()
+
+
+def test_stack_does_not_apply_on_the_horizontal_taskbar(placed):
+    wd = placed(grouped=True, bar=dict())
+    wd.set_stacked(True)
+    assert not wd.is_stacked()
+    assert len({r[1] for r in wd._rects}) == 1       # still a row
+
+
+def test_stack_follows_the_mode_live(placed):
+    wd = _floating(placed)
+    wd.set_stacked(True)
+    assert wd.is_stacked()
+    wd.set_placement_settings(PlacementSettings(mode="taskbar"))
+    assert not wd.is_stacked() or wd._floating

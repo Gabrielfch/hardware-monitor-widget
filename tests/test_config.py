@@ -232,3 +232,26 @@ def test_group_pills_default_true_validates_and_persists(tmp_path):
         c.set("group_pills", "yes")
     _write(p, {"group_pills": "garbage"})
     assert Config(p).get("group_pills") is True    # invalid value falls back to the default
+
+
+def test_pill_options_defaults_validate_and_persist(tmp_path):
+    import pytest
+    p = tmp_path / "config.json"
+    _write(p, {"theme": "dark"})
+    c = Config(p)
+    assert (c.get("pill_style"), c.get("pill_labels"), c.get("pill_bars"), c.get("stack_pills")) == (
+        "transparent", False, True, False)
+    for style in ("classic", "soft", "transparent", "compact"):
+        c.set("pill_style", style)
+        assert Config(p).get("pill_style") == style
+    for key in ("pill_labels", "pill_bars", "stack_pills"):
+        c.set(key, not c.get(key))
+        assert Config(p).get(key) is c.get(key)
+        with pytest.raises(ValueError):
+            c.set(key, "yes")
+    with pytest.raises(ValueError):
+        c.set("pill_style", "neon")
+    _write(p, {"pill_style": "neon", "pill_labels": 1, "pill_bars": "x", "stack_pills": None})
+    d = Config(p)
+    assert (d.get("pill_style"), d.get("pill_labels"), d.get("pill_bars"), d.get("stack_pills")) == (
+        "transparent", False, True, False)

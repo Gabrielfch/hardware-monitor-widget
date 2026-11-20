@@ -107,7 +107,8 @@ def test_root_order_matches_the_design(m):
 
 def test_pages_content(m):
     assert ids(m.find("personalization")) == ["theme", "palette", "custom_colors", "icon_style", "panel_size",
-                                              "ui_scale", "group_pills", "language"]
+                                              "ui_scale", "group_pills", "pill_style", "pill_labels", "pill_bars",
+                                              "stack_pills", "language"]
     assert ids(m.find("position")) == ["placement", "float_anchor", "monitor", "show_in_fullscreen",
                                        "fullscreen_placement", "position_sep", "reset_position"]
     assert ids(m.find("custom_icons")) == ["manage_icons", "clear_icons"]

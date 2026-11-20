@@ -44,6 +44,7 @@ COLOR_PALETTES = ("classic", "colorblind", "pastel", "high_contrast", "mono", "c
 CUSTOM_COLOR_KEYS = ("ok", "warn", "crit")
 DEFAULT_CUSTOM_COLORS = {"ok": "#6EDC78", "warn": "#F5C842", "crit": "#FF9999"}
 ICON_STYLES = ("outline", "filled", "simple", "none")
+PILL_STYLES = ("classic", "soft", "transparent", "compact")
 UI_SCALES = (90, 100, 115, 130)
 PANEL_SIZES = ("compact", "normal", "large")
 LANGUAGE_CHOICES = ("auto", "es", "en")
@@ -84,6 +85,10 @@ DEFAULTS = {
     "icon_style": "outline",
     "ui_scale": 100,
     "group_pills": True,            # one pill per hardware (several values) instead of one per sensor
+    "pill_style": "transparent",    # classic | soft | transparent | compact
+    "pill_labels": False,           # CPU / GPU / RAM... text instead of the hardware icon
+    "pill_bars": True,              # thin level bar under the values (never in "compact")
+    "stack_pills": False,           # floating: one component per row, values in columns
     "panel_size": "normal",
     "language": "auto",
     "placement_mode": "taskbar",
@@ -301,6 +306,10 @@ _CLEANERS = {
     "theme": _enum(THEMES),
     "fahrenheit": _bool,
     "group_pills": _bool,
+    "pill_style": _enum(PILL_STYLES),
+    "pill_labels": _bool,
+    "pill_bars": _bool,
+    "stack_pills": _bool,
     "start_with_windows": _bool,
     "collapsed": _collapsed,
     "hidden_hardware": _hidden,

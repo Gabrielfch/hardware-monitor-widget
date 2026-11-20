@@ -423,3 +423,43 @@ def test_group_pills_toggle_persists_and_applies_live(ctl):
     assert saved["group_pills"] is False
     a.set_bool("group_pills", True)
     assert ctl.widget.is_grouped()
+
+
+def test_pill_style_and_switches_persist_and_apply_live(ctl):
+    a, w = ctl.actions, ctl.widget
+    assert w.pill_style() == "transparent" and not w.pill_labels() and w.pill_bars() and not w._stack
+    a.set_pill_style("compact")
+    assert ctl.cfg.get("pill_style") == "compact" and w.pill_style() == "compact"
+    a.set_bool("pill_labels", True)
+    assert a.get_bool("pill_labels") and ctl.cfg.get("pill_labels") is True and w.pill_labels()
+    a.set_bool("pill_bars", False)
+    assert ctl.cfg.get("pill_bars") is False and not a.get_bool("pill_bars")
+    a.set_bool("stack_pills", True)
+    assert ctl.cfg.get("stack_pills") is True and w._stack
+    saved = json.loads(Path(ctl.cfg.path).read_text(encoding="utf-8"))
+    assert saved["pill_style"] == "compact" and saved["stack_pills"] is True and saved["pill_labels"] is True
+
+
+def test_pill_options_are_applied_at_startup(qapp, monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr(startup, "is_enabled", lambda: False)
+    cfg = Config(tmp_path / "c.json")
+    cfg.set("pill_style", "soft")
+    cfg.set("pill_labels", True)
+    cfg.set("pill_bars", False)
+    cfg.set("stack_pills", True)
+    monkeypatch.setattr(app_mod.TrayController, "notify", lambda self, t, b, info=True: None)
+    c = app_mod.Controller(qapp, cfg, None)
+    w = c.widget
+    assert w.pill_style() == "soft" and w.pill_labels() and not w.pill_bars() and w._stack
+
+
+def test_stack_toggle_is_enabled_only_when_floating(ctl):
+    from hardware_monitor_widget.settings_model import build_settings_model
+    m = build_settings_model(ctl.actions.callbacks())
+    t = m.find("stack_pills")
+    assert not t.enabled()
+    ctl.actions.set_placement("floating")
+    assert t.enabled()
+    assert m.find("pill_style").current_label()
