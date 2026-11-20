@@ -41,6 +41,11 @@ internal static class Program
     private static Stream? _stdout;
     private static int _interval = 1000;
     private static volatile bool _quit;
+    // hardware groups requested by the app ("hardware" command / --hardware); null = default set (everything)
+    private static readonly object GroupLock = new();
+    private static HashSet<string>? _wantedGroups;
+    private static bool _groupsDirty;
+    private static string _groupsLabel = "all";
 
     private static void Emit(Dictionary<string, object?> msg)
     {
@@ -117,6 +122,7 @@ internal static class Program
 
     private static void EmitSnapshot(Computer computer)
     {
+        ApplyGroups(computer);
         computer.Accept(new UpdateVisitor());
         var hws = new List<object>();
         var sensors = new List<object>();
@@ -128,10 +134,59 @@ internal static class Program
             ["t"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             ["hardware"] = hws,
             ["sensors"] = sensors,
+            ["groups"] = _groupsLabel,
         });
     }
 
     private static int ClampInterval(int ms) => Math.Clamp(ms, 250, 10000);
+
+    private static readonly string[] KnownGroups = { "cpu", "gpu", "ram", "mainboard", "storage", "network" };
+
+    // "all" (or empty) -> null (default set); otherwise the known group names of a comma/space separated list.
+    internal static HashSet<string>? ParseGroups(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string raw in text.Split(new[] { ',', ' ', ';' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string g = raw.Trim().ToLowerInvariant();
+            if (g == "all") return null;
+            if (Array.IndexOf(KnownGroups, g) >= 0) set.Add(g);
+        }
+        return set;
+    }
+
+    private static void SetGroups(string? text)
+    {
+        var parsed = ParseGroups(text);
+        lock (GroupLock)
+        {
+            _wantedGroups = parsed;
+            _groupsDirty = true;
+        }
+    }
+
+    // Applied on the update loop thread (Computer is not thread-safe); enabling/disabling opens/closes the group.
+    private static void ApplyGroups(Computer c)
+    {
+        HashSet<string>? want;
+        lock (GroupLock)
+        {
+            if (!_groupsDirty) return;
+            _groupsDirty = false;
+            want = _wantedGroups;
+        }
+        bool On(string g) => want == null || want.Contains(g);
+        c.IsCpuEnabled = On("cpu");
+        c.IsGpuEnabled = On("gpu");
+        c.IsMemoryEnabled = On("ram");
+        bool board = On("mainboard");
+        c.IsMotherboardEnabled = board;
+        c.IsControllerEnabled = board;
+        c.IsStorageEnabled = On("storage");
+        c.IsNetworkEnabled = want != null && want.Contains("network");   // off unless asked explicitly
+        _groupsLabel = want == null ? "all" : string.Join(",", want.OrderBy(x => x, StringComparer.Ordinal));
+    }
 
     public static int Main(string[] args)
     {
@@ -142,6 +197,11 @@ internal static class Program
             else if (args[i] == "--interval" && i + 1 < args.Length && int.TryParse(args[i + 1], out int v))
             {
                 _interval = ClampInterval(v);
+                i++;
+            }
+            else if (args[i] == "--hardware" && i + 1 < args.Length)
+            {
+                SetGroups(args[i + 1]);
                 i++;
             }
         }
@@ -163,6 +223,7 @@ internal static class Program
                 IsMotherboardEnabled = true, IsStorageEnabled = true, IsControllerEnabled = true,
                 IsNetworkEnabled = false,
             };
+            ApplyGroups(computer);   // --hardware given on the command line (before Open: nothing to tear down)
             computer.Open();
 
             if (once)
@@ -185,6 +246,8 @@ internal static class Program
                         if (line.StartsWith("interval ", StringComparison.Ordinal) &&
                             int.TryParse(line.AsSpan(9), out int ms))
                             Volatile.Write(ref _interval, ClampInterval(ms));
+                        else if (line.StartsWith("hardware ", StringComparison.Ordinal))
+                            SetGroups(line.Substring(9));
                         // "refresh" and "interval" both just wake the loop for a fresh snapshot.
                         wake.Set();
                     }

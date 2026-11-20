@@ -13,7 +13,7 @@ from PySide6.QtCore import QLockFile, QObject, QPoint, QRect, QTimer
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QApplication
 
-from . import custom_icons, i18n, startup, taskbar
+from . import custom_icons, i18n, power, startup, taskbar
 from .appearance import apply_appearance, apply_color_scheme
 from .config import APP_DIR_NAME, Config, is_reparse_point
 from .curation import Prefs, toggle_override
@@ -34,6 +34,7 @@ log = logging.getLogger(__name__)
 THEME_REFRESH_MS = 5000
 SETTINGS_REFRESH_MS = 250       # settings page refresh at most 4 times per second
 PANEL_REOPEN_GRACE_S = 0.3
+POWER_SYNC_MS = 1000            # how often the polling interval / hardware groups are re-evaluated
 
 
 def local_app_dir() -> Path:
@@ -158,6 +159,31 @@ class Controller(QObject):
         self._theme_timer = QTimer(self)
         self._theme_timer.setInterval(THEME_REFRESH_MS)
         self._theme_timer.timeout.connect(self.sync_theme)
+        self._full: Snapshot | None = None          # last snapshot taken with every hardware group enabled
+        self._power_timer = QTimer(self)
+        self._power_timer.setInterval(POWER_SYNC_MS)
+        self._power_timer.timeout.connect(self.sync_power)
+
+    # ---- polling interval / hardware groups (see power.py)
+    def _ui_open(self) -> bool:
+        return self.panel.isVisible() or (self.detail is not None and self.detail.isVisible())
+
+    def sync_power(self) -> None:
+        """Poll at the configured interval while someone looks at the data, slower when the bar is hidden and
+        nothing records; read only the hardware groups the visible pills / tray / alerts / history need."""
+        m = self.monitor
+        if m is None or not hasattr(m, "set_groups"):
+            return
+        c = self.cfg
+        ui = self._ui_open()
+        history, alerts = bool(c.get("history_enabled")), bool(c.get("alerts_enabled"))
+        interval = power.effective_interval(int(c.get("interval_ms")), ui, self.widget.isVisible(),
+                                            history or alerts)
+        m.set_interval(interval)
+        before = m.groups
+        m.set_groups(power.needed_groups(self._full, list(c.get("pinned")), ui, history, alerts, self._prefs()))
+        if ui and before is not None:
+            m.refresh()         # the panel opens on a reduced snapshot: fetch the complete one now
 
     # ---- config -> view models
     def _prefs(self) -> Prefs:
@@ -207,11 +233,13 @@ class Controller(QObject):
             self.tray.show()
         self.widget.start()
         self._theme_timer.start()
+        self._power_timer.start()
         self.updates.start_auto()
         if self.monitor is not None:
             self.monitor.start()
 
     def quit(self) -> None:
+        self._power_timer.stop()
         self.updates.cancel()
         self.history.flush()
         if self.monitor is not None:
@@ -226,6 +254,8 @@ class Controller(QObject):
     # ---- data
     def on_snapshot(self, snapshot) -> None:
         self.snapshot = snapshot
+        if snapshot.groups == "all" and snapshot.sensors and not is_stale(snapshot):
+            self._full = snapshot
         self.widget.set_snapshot(snapshot)
         if self.panel.isVisible():
             self.panel.set_snapshot(snapshot)
@@ -254,6 +284,9 @@ class Controller(QObject):
     def _check_alerts(self, snapshot) -> None:
         """Tray notification for summary / pinned temperatures that stayed red (see alerts.AlertManager)."""
         try:
+            if not self.cfg.get("alerts_enabled"):
+                self.alerts.check([], time.monotonic())     # only clears the pending state
+                return
             sensors = alert_sensors(snapshot, self._prefs(), self.cfg.get("pinned"))
             for title, body in self.alerts.check(sensors, time.monotonic(), stale=is_stale(snapshot)):
                 self.tray.notify(title, body, info=False)
@@ -313,6 +346,7 @@ class Controller(QObject):
             g = self.tray.geometry()
             anchor = g if g.isValid() and not g.isEmpty() else QCursor.pos()
         p.show_at(anchor)
+        self.sync_power()
 
     # ---- detail window (one instance, created on first use)
     def _ensure_detail(self) -> DetailWindow:
@@ -338,6 +372,7 @@ class Controller(QObject):
         d.set_snapshot(self.snapshot)
         self.panel.hide()
         d.show_for(hw_id or None)
+        self.sync_power()
 
     # ---- pins and summary overrides
     def _set_pins(self, pins: list[str]) -> bool:

@@ -455,7 +455,8 @@ class TaskbarWidget(QWidget):
     def set_snapshot(self, snapshot: Snapshot) -> None:
         self._snapshot = snapshot
         before = self.size()
-        self._rebuild()
+        if not self._rebuild(skip_if_same=True):
+            return          # every pill is identical: no re-measure, repaint or repositioning
         if self._started:
             self.update_position(force=self.size() != before)
 
@@ -680,7 +681,9 @@ class TaskbarWidget(QWidget):
         self._save_floating(key, {"anchor": anchor, "dx": 0, "dy": 0})
 
     # ------------------------------------------------------------------ model -> pills
-    def _rebuild(self) -> None:
+    def _rebuild(self, skip_if_same: bool = False) -> bool:
+        """Rebuild the pills from the snapshot and pins. With `skip_if_same` nothing is touched (and False is
+        returned) when the new pills equal the current ones."""
         sensors = resolve_pins(self._pinned, self._snapshot)
         if len(sensors) > 1:       # display order, not pin order: toggling a pin never reorders the others
             sensors = order_sensors(sensors, self._snapshot, self._hw_order)
@@ -693,10 +696,13 @@ class TaskbarWidget(QWidget):
         if not pills:
             tip = empty_tooltip(self._pinned, self._snapshot)
             pills = [Pill(EMPTY_KEY, "cpu", "", "—", tip, a11y=tip, stale=stale)]
+        if skip_if_same and pills == self._all:
+            return False
         self._all = pills
         desc = " · ".join(p.a11y for p in pills)
         self.setAccessibleDescription(desc + (" · " + tr("stale_tip") if stale else ""))
         self._relayout()
+        return True
 
     def _apply_metrics(self) -> bool:
         """Effective pill height / scale from the placement's base height and the UI scale; True if changed."""

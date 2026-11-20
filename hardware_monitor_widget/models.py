@@ -67,6 +67,7 @@ class Snapshot:
     sensors: list[Sensor] = field(default_factory=list)
     statuses: dict[str, SourceStatus] = field(default_factory=dict)
     taken_at: float = 0.0
+    groups: str = "all"      # hardware groups the host had enabled for this snapshot ("all" or "cpu,gpu,...")
 
     def by_key(self) -> dict[str, Sensor]:
         return {s.key: s for s in self.sensors}

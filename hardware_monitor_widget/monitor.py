@@ -38,6 +38,7 @@ class HardwareMonitor(QObject):
     def __init__(self, interval_ms: int = 1000, parent=None, host_factory=None):
         super().__init__(parent)
         self._interval_ms = _clamp(interval_ms)
+        self._groups: frozenset[str] | None = None     # None = every group (host default)
         self._host_factory = host_factory
         self._host = None
         self._hello: dict | None = None
@@ -58,6 +59,8 @@ class HardwareMonitor(QObject):
             return
         factory = self._host_factory or (lambda cb, ms: sensorhost.SensorHostProcess(cb, ms))
         self._host = factory(self._message.emit, self._interval_ms)
+        if self._groups is not None and hasattr(self._host, "set_groups"):
+            self._host.set_groups(self._groups)
         self._last_activity = time.monotonic()
         self._host.start()
         self._watchdog.start()
@@ -78,9 +81,33 @@ class HardwareMonitor(QObject):
             self._host.refresh()
 
     def set_interval(self, ms: int) -> None:
-        self._interval_ms = _clamp(ms)
+        ms = _clamp(ms)
+        if ms == self._interval_ms:
+            return
+        self._interval_ms = ms
         if self._host is not None:
             self._host.set_interval(self._interval_ms)
+
+    def set_groups(self, groups) -> None:
+        """Enable only these hardware groups in the host (None = all). No-op when unchanged."""
+        new = None if groups is None else frozenset(groups)
+        if new == self._groups:
+            return
+        self._groups = new
+        host = self._host
+        if host is not None and hasattr(host, "set_groups"):
+            # opening a group (SMART, SMBus...) can take a while: give the host the startup grace again
+            self._got_snapshot = False
+            self._last_activity = time.monotonic()
+            host.set_groups(new)
+
+    @property
+    def groups(self) -> frozenset[str] | None:
+        return self._groups
+
+    @property
+    def interval_ms(self) -> int:
+        return self._interval_ms
 
     def stale_after_s(self) -> float:
         if not self._got_snapshot:

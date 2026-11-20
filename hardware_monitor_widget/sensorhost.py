@@ -42,6 +42,18 @@ _HW_KIND = {
     "network": "network",
 }
 
+# Hardware groups the host understands in the ``hardware`` command (models.HW_KINDS minus "other").
+HOST_GROUPS = ("cpu", "gpu", "ram", "mainboard", "storage", "network")
+
+
+def groups_arg(groups) -> str:
+    """Wire form of a group set for ``hardware <list|all>``: None / unknown content -> "all"."""
+    if groups is None:
+        return "all"
+    names = sorted({g for g in groups if g in HOST_GROUPS})
+    return ",".join(names) if names else "cpu"
+
+
 # Default scale of the pill bar for temperatures.
 _TEMP_LIMITS = {"cpu": 95.0, "gpu": 110.0}
 
@@ -154,6 +166,7 @@ def snapshot_from_message(msg: dict, hello: dict | None) -> Snapshot:
         sensors=sensors,
         statuses={SOURCE: status_for(hello, bool(sensors))},
         taken_at=t / 1000.0 if t else time.time(),
+        groups=_text(msg.get("groups"), "all") or "all",
     )
 
 
@@ -191,6 +204,7 @@ class SensorHostProcess:
         self._write_lock = threading.Lock()
         self._reset_backoff = False
         self._restarting = False
+        self._groups = "all"                # last requested hardware groups (reapplied on respawn)
 
     @property
     def path(self) -> Path:
@@ -240,6 +254,11 @@ class SensorHostProcess:
         self._interval_ms = int(ms)
         self._send(f"interval {self._interval_ms}")
 
+    def set_groups(self, groups) -> None:
+        """Enable only these hardware groups in the host (None = all, the host default)."""
+        self._groups = groups_arg(groups)
+        self._send(f"hardware {self._groups}")
+
     def refresh(self) -> None:
         if not self._send("refresh"):
             # host dead or waiting in backoff: retry now
@@ -272,8 +291,11 @@ class SensorHostProcess:
 
     def _spawn(self) -> subprocess.Popen:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        args = [str(self._path), "--interval", str(self._interval_ms)]
+        if self._groups != "all":
+            args += ["--hardware", self._groups]
         return subprocess.Popen(
-            [str(self._path), "--interval", str(self._interval_ms)],
+            args,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             cwd=str(self._path.parent), creationflags=flags, env=clean_env(),
             text=True, encoding="utf-8", errors="replace", bufsize=1,
