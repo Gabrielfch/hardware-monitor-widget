@@ -6,6 +6,22 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-20
+
+### Added
+- Umbrales de color por sensor (ventana de detalle → clic derecho → «Umbrales…»).
+- Alertas de temperatura con notificación de Windows (Ajustes → Alertas).
+- Historial por minuto (30 días, máx. 20 MB) con gráficas de 1 h, 24 h y 7 días en la ventana de detalle.
+- «Restablecer orden» del panel.
+- Idiomas: portugués (Brasil), francés, ruso, chino simplificado y japonés (traducción automática).
+
+### Changed
+- El modo apilado ya no se sale de la pantalla: lo que no cabe va a una píldora «+N».
+- El motor solo lee los grupos de hardware necesarios y la app lee cada 5 s cuando no hay nada visible.
+
+### Fixed
+- Soltar un componente arrastrado mientras cambiaban los sensores podía dejarlo en una posición equivocada.
+
 ## [0.2.0] - 2026-11-20
 
 ### Added
