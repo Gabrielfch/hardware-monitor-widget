@@ -108,6 +108,7 @@ DEFAULTS = {
     "custom_icons_hw": {},
     "custom_icons_sensor": {},
     "log_debug": False,
+    "history_enabled": True,        # save one sample per minute of the summary / pinned sensors
     "update_check_auto": False,
     "update_last_check": 0,
     "thresholds": {},               # sensor key -> [amber, orange, red] overriding the default colour bands
@@ -385,6 +386,7 @@ _CLEANERS = {
     "custom_icons_hw": _icons(lambda k: HW_ID_RE.fullmatch(k) is not None),
     "custom_icons_sensor": _icons(lambda k: True),
     "log_debug": _bool,
+    "history_enabled": _bool,
     "update_check_auto": _bool,
     "update_last_check": _update_last_check,
     "thresholds": _thresholds,

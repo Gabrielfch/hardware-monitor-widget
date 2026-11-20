@@ -43,6 +43,10 @@ one of the project's embedded keys and the installer must match its hash before 
 time before installing). Everything else runs locally. It stores only:
 - Settings: `%APPDATA%\HardwareMonitorWidget\config.json`
 - Logs: `%LOCALAPPDATA%\HardwareMonitorWidget\logs\app.log`, rotated at 512 KB x 3
+- Sensor history: `%LOCALAPPDATA%\HardwareMonitorWidget\history\` (one file per day). One sample per minute
+  (the average of that minute) of the sensors in the summary and the pinned ones: sensor id and value, no
+  personal data. Files older than 30 days are deleted and the folder never exceeds 20 MB. It feeds the charts
+  of the detail window. Turn it off or delete it in *Settings > Logs*
 - Custom icons: `%ProgramData%\HardwareMonitorWidget\icons` (writable by administrators only)
 
 *About > Copy technical info* never includes your user name, computer name or profile paths.

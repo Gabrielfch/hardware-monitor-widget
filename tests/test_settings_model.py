@@ -112,7 +112,7 @@ def test_pages_content(m):
     assert ids(m.find("position")) == ["placement", "float_anchor", "monitor", "show_in_fullscreen",
                                        "fullscreen_placement", "position_sep", "reset_position"]
     assert ids(m.find("custom_icons")) == ["manage_icons", "clear_icons"]
-    assert ids(m.find("logs")) == ["open_log", "open_logs_folder", "log_debug"]
+    assert ids(m.find("logs")) == ["open_log", "open_logs_folder", "log_debug", "history_enabled", "clear_history"]
 
 
 def test_all_ids_unique_and_kinds(m):

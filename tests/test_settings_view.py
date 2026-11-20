@@ -77,7 +77,7 @@ def test_enter_page_and_back_with_arrow(view):
     view.leave_requested.connect(lambda: left.append(1))
     click(view.row("logs"))
     assert view.path_ids == ["root", "logs"] and view.title_text() == "Logs"
-    assert list(view.rows()) == ["open_log", "open_logs_folder", "log_debug"]
+    assert list(view.rows()) == ["open_log", "open_logs_folder", "log_debug", "history_enabled", "clear_history"]
     view.back_button().click()
     assert view.path_ids == ["root"] and not left
     view.back_button().click()                               # from the root: leave to the summary

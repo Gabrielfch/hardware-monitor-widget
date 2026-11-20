@@ -87,6 +87,9 @@ class SettingsCallbacks:
     open_logs_folder: Callable[[], None] = lambda: None
     get_log_debug: Callable[[], bool] = lambda: False
     set_log_debug: Callable[[bool], None] = lambda on: None
+    get_history_enabled: Callable[[], bool] = lambda: True
+    set_history_enabled: Callable[[bool], None] = lambda on: None
+    clear_history: Callable[[], None] = lambda: None
     # startup
     startup_enabled: Callable[[], bool] = lambda: False             # real state of the Windows startup entry
     set_startup: Callable[[bool], None] = lambda on: None
@@ -449,6 +452,10 @@ def build_settings_model(cb: SettingsCallbacks | None = None) -> SettingsModel:
         Action(id="open_logs_folder", label_key="set_open_logs_folder", run=lambda: cb.open_logs_folder()),
         Toggle(id="log_debug", label_key="set_log_debug", tip_key="set_log_debug_tip",
                get=lambda: bool(_safe(cb.get_log_debug, False)), set=lambda v: cb.set_log_debug(bool(v))),
+        Toggle(id="history_enabled", label_key="set_history", tip_key="set_history_tip",
+               get=lambda: bool(_safe(cb.get_history_enabled, True)),
+               set=lambda v: cb.set_history_enabled(bool(v))),
+        Action(id="clear_history", label_key="set_clear_history", run=lambda: cb.clear_history()),
     ])
 
     # ---- updates

@@ -18,6 +18,7 @@ from .appearance import apply_appearance, apply_color_scheme
 from .config import APP_DIR_NAME, Config, is_reparse_point
 from .curation import Prefs, toggle_override
 from .alerts import AlertManager, alert_sensors
+from .history import History, history_sensors
 from .detail_window import DetailWindow
 from .models import Snapshot, band_for, is_stale, set_threshold_overrides
 from .panel import HardwarePanel
@@ -84,6 +85,7 @@ class Controller(QObject):
         super().__init__(app)
         self.app, self.cfg, self.monitor = app, cfg, monitor
         self.snapshot = Snapshot()
+        self.history = History(local_app_dir() / "history", bool(cfg.get("history_enabled")))
         self.lock: QLockFile | None = None   # single-instance lock, released before a relaunch
         self.warned: set[str] = set()        # one-per-session notices
         self.detail: DetailWindow | None = None
@@ -211,6 +213,7 @@ class Controller(QObject):
 
     def quit(self) -> None:
         self.updates.cancel()
+        self.history.flush()
         if self.monitor is not None:
             self.monitor.stop()
         self.widget.stop()
@@ -237,6 +240,16 @@ class Controller(QObject):
         self.tray.set_icon_state(text, band, not self._taskbar_light,
                                  stale=is_stale(snapshot))
         self._check_alerts(snapshot)
+        self._record_history(snapshot)
+
+    def _record_history(self, snapshot) -> None:
+        if is_stale(snapshot) or not self.history.enabled:
+            return
+        try:
+            sensors = history_sensors(snapshot, self._prefs(), self.cfg.get("pinned"))
+            self.history.record({s.key: s.value for s in sensors if s.value is not None})
+        except Exception:  # noqa: BLE001 - history must never break the sensor loop
+            log.warning("history recording failed", exc_info=True)
 
     def _check_alerts(self, snapshot) -> None:
         """Tray notification for summary / pinned temperatures that stayed red (see alerts.AlertManager)."""
@@ -308,6 +321,7 @@ class Controller(QObject):
             d.set_fahrenheit(bool(self.cfg.get("fahrenheit")))
             d.set_pinned(self.cfg.get("pinned"))
             d.set_prefs(self._prefs())
+            d.set_history(self.history)
             d.set_toggled(self.cfg.get("detail_toggled"))
             d.restore_geometry(self.cfg.get("detail_geometry"))
             d.pin_toggled.connect(self.on_pin_toggled)
@@ -449,6 +463,11 @@ class Controller(QObject):
             self.detail.retranslate()
         self.tray.retranslate()
         self.widget.set_snapshot(self.snapshot)     # pill texts and tooltips are rebuilt
+
+    def history_changed(self) -> None:
+        self.history.set_enabled(bool(self.cfg.get("history_enabled")))
+        if self.detail is not None:
+            self.detail.set_history(self.history)
 
     def apply_log_level(self) -> None:
         apply_log_level(self.cfg)

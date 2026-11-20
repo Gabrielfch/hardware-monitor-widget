@@ -107,6 +107,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "set_open_logs_folder": "Open the logs folder",
         "set_log_debug": "Debug level",
         "set_log_debug_tip": "Writes more detail to the log",
+        "set_history": "Save sensor history",
+        "set_history_tip": "One sample per minute of the summary and pinned sensors, kept for 30 days",
+        "set_clear_history": "Delete history",
+        "set_clear_history_confirm": "Delete all the saved sensor history? This cannot be undone.",
         # updates
         "set_upd_status": "Status",
         "set_upd_idle": "No check done yet",
@@ -217,6 +221,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "set_open_logs_folder": "Abrir la carpeta de registros",
         "set_log_debug": "Nivel de depuración",
         "set_log_debug_tip": "Escribe más detalle en el registro",
+        "set_history": "Guardar historial de sensores",
+        "set_history_tip": "Una muestra por minuto de los sensores del resumen y fijados, durante 30 días",
+        "set_clear_history": "Borrar historial",
+        "set_clear_history_confirm": "¿Borrar todo el historial de sensores guardado? No se puede deshacer.",
         # updates
         "set_upd_status": "Estado",
         "set_upd_idle": "Aún no se ha comprobado",

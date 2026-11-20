@@ -370,6 +370,8 @@ class SettingsActions:
             open_custom_icons=self.open_custom_icons, clear_custom_icons=self.clear_custom_icons,
             open_log=self.open_log, open_logs_folder=self.open_logs_folder,
             get_log_debug=lambda: bool(self.cfg.get("log_debug")), set_log_debug=self.set_log_debug,
+            get_history_enabled=lambda: bool(self.cfg.get("history_enabled")),
+            set_history_enabled=self.set_history_enabled, clear_history=self.clear_history,
             startup_enabled=lambda: self._cached("startup", startup.is_enabled), set_startup=self.set_startup,
             update_state=self.updates.snapshot, check_updates=self.updates.check_now,
             can_install_update=self.updates.can_install, install_update=self.updates.install,
@@ -620,6 +622,14 @@ class SettingsActions:
     def set_log_debug(self, on: bool) -> None:
         if self._set("log_debug", bool(on)):
             self.ctl.apply_log_level()
+
+    def set_history_enabled(self, on: bool) -> None:
+        if self._set("history_enabled", bool(on)):
+            self.ctl.history_changed()
+
+    def clear_history(self) -> None:
+        if self._confirm(tr("set_menu_logs"), tr("set_clear_history_confirm")):
+            self.ctl.history.clear()
 
     # ---- startup
     def set_startup(self, on: bool) -> None:

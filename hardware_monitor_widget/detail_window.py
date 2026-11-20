@@ -6,6 +6,7 @@ know `Config` (ADR-7): it receives snapshot, pins and `Prefs`, and emits signals
 from __future__ import annotations
 
 import logging
+import time
 
 from PySide6.QtCore import QEvent, QPersistentModelIndex, QPointF, QRectF, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import (QBrush, QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPainterPath, QPen,
@@ -15,6 +16,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QHBoxLa
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from . import custom_icons, i18n, taskbar
+from .history import PERIODS, stats
+from .history_chart import HistoryChart
 from .colors import TASKBAR_BASE, band_color, section_header_color, text_color
 from .curation import DetailHardware, DetailTree, Prefs, detail_tree, in_summary, section_title_key
 from .icons import icons_visible
@@ -281,6 +284,38 @@ class DetailWindow(QWidget):
         self.stack.addWidget(self.message)
         lay.addWidget(self.stack, 1)
 
+        self._history = None                    # history.History (set_history); None hides the chart panel
+        self._hist_key: str | None = None
+        self._hist_period = "24h"
+        self._hist_rev = -1
+        self.hist_panel = QWidget()
+        self.hist_panel.setObjectName("historyPanel")
+        hl = QVBoxLayout(self.hist_panel)
+        hl.setContentsMargins(0, 2, 0, 0)
+        hl.setSpacing(4)
+        hh = QHBoxLayout()
+        hh.setSpacing(6)
+        self.hist_title = QLabel()
+        self.hist_title.setObjectName("historyTitle")
+        hh.addWidget(self.hist_title, 1)
+        self.hist_buttons: dict[str, QPushButton] = {}
+        for pid in PERIODS:
+            b = QPushButton()
+            b.setCheckable(True)
+            b.setObjectName("historyPeriod_" + pid)
+            b.clicked.connect(lambda _c=False, pid=pid: self.set_history_period(pid))
+            hh.addWidget(b)
+            self.hist_buttons[pid] = b
+        hl.addLayout(hh)
+        self.hist_stats = QLabel()
+        self.hist_stats.setObjectName("historyStats")
+        hl.addWidget(self.hist_stats)
+        self.hist_chart = HistoryChart()
+        hl.addWidget(self.hist_chart)
+        self.hist_panel.hide()
+        lay.addWidget(self.hist_panel)
+        self.tree.currentItemChanged.connect(lambda _cur, _prev: self._on_current_changed())
+
         self.notice = QLabel()
         self.notice.setObjectName("detailNotice")
         self.notice.setWordWrap(True)
@@ -323,6 +358,18 @@ class DetailWindow(QWidget):
             return
         self._apply_snapshot()
 
+    def set_history(self, history) -> None:
+        """History store used by the chart panel (None or a disabled store hides it)."""
+        self._history = history
+        self._hist_rev = -1
+        self._refresh_history()
+
+    def set_history_period(self, period: str) -> None:
+        if period in PERIODS:
+            self._hist_period = period
+            self._hist_rev = -1
+            self._refresh_history()
+
     def set_pinned(self, pinned: list[str]) -> None:
         pinned = list(pinned)
         if pinned != self._pinned:
@@ -348,12 +395,15 @@ class DetailWindow(QWidget):
                 return
             self._cache.clear()
             self._update_values()
+            self._hist_rev = -1
+            self._refresh_history()
 
     def set_dark(self, dark: bool) -> None:
         if bool(dark) != self._dark:
             self._dark = bool(dark)
             self._delegate.set_dark(self._dark)
             self._apply_style()
+            self._hist_rev = -1
             self._sig = None
             self._dirty = True
             if self.isVisible():
@@ -439,6 +489,7 @@ class DetailWindow(QWidget):
         self._update_values()
         self._refresh_pins()
         self._refresh_summary()
+        self._refresh_history(live=True)
 
     def _signature(self, tree: DetailTree) -> tuple:
         def hw_sig(hw: DetailHardware):
@@ -620,6 +671,51 @@ class DetailWindow(QWidget):
         finally:
             self._updating = False
 
+    # ------------------------------------------------------------------ history chart
+    def _on_current_changed(self) -> None:
+        item = self.tree.currentItem()
+        key = None
+        if item is not None and item.data(0, ROLE_KIND) == "sensor":
+            key = item.data(0, ROLE_ID)
+        self._hist_key = key
+        self._hist_rev = -1
+        self._refresh_history()
+
+    def _refresh_history(self, live: bool = False) -> None:
+        """Updates the chart panel. `live`: called per snapshot; only the 1 h chart (memory) follows every
+        tick, longer periods are re-read from disk when a new minute was stored."""
+        h, key = self._history, self._hist_key
+        s = self._snapshot.by_key().get(key) if key else None
+        if h is None or not getattr(h, "enabled", False) or s is None or not self.isVisible():
+            self.hist_panel.setVisible(False)
+            return
+        if live and self._hist_period != "1h" and self._hist_rev == h.revision:
+            return
+        self._hist_rev = h.revision
+        seconds = PERIODS[self._hist_period]
+        now = time.time()
+        pts = h.series(key, seconds, now)
+        name = display_name(s)
+        period = i18n.tr("hist_" + self._hist_period)
+        for pid, b in self.hist_buttons.items():
+            b.setChecked(pid == self._hist_period)
+        sep, fahr = i18n.decimal_sep(), self._fahrenheit
+        st = stats(pts)
+        if st is None:
+            text = i18n.tr("hist_none")
+            a11y = i18n.tr("hist_a11y_empty", name=name, period=period)
+        else:
+            vals = [format_value(s.kind, v, fahr, sep) for v in st]
+            text = i18n.tr("hist_stats", min=vals[0], max=vals[1], avg=vals[2])
+            a11y = i18n.tr("hist_a11y", name=name, period=period, min=vals[0], max=vals[1], avg=vals[2])
+        self.hist_title.setText(i18n.tr("hist_title", name=name))
+        self.hist_stats.setText(text)
+        self.hist_chart.set_data(pts, s.kind, fahr, self._dark, seconds, now)
+        self.hist_chart.setAccessibleName(a11y)
+        self.hist_chart.setAccessibleDescription(a11y)
+        self.hist_chart.setToolTip(a11y)
+        self.hist_panel.setVisible(True)
+
     @staticmethod
     def _set_state(item: QTreeWidgetItem, col: int, state: Qt.CheckState) -> None:
         if item.checkState(col) != state:
@@ -789,6 +885,11 @@ class DetailWindow(QWidget):
         self.hint.setText(i18n.tr("detail_hint"))
         self.hint.setAccessibleName(i18n.tr("detail_hint"))
         self.count.setText(i18n.tr("detail_count", n=len(self._items)))
+        for pid, b in self.hist_buttons.items():
+            b.setText(i18n.tr("hist_" + pid))
+            b.setAccessibleName(i18n.tr("hist_period_a11y", period=i18n.tr("hist_" + pid)))
+        self._hist_rev = -1
+        self._refresh_history()
 
     def _apply_style(self) -> None:
         dark = self._dark
@@ -804,7 +905,8 @@ class DetailWindow(QWidget):
         self.setStyleSheet(
             f"QWidget#DetailWindow {{ background: {base.name()}; }}"
             f"QLabel {{ background: transparent; color: {text.name()}; }}"
-            f"QLabel#detailHint, QLabel#detailCount {{ color: {muted.name()}; }}"
+            f"QLabel#detailHint, QLabel#detailCount, QLabel#historyStats {{ color: {muted.name()}; }}"
+            f"QPushButton:checked {{ background: {sel.name()}; }}"
             f"QLabel#detailNotice {{ color: {band_color('amber', dark).name()}; }}"
             f"QLineEdit {{ background: {field.name()}; color: {text.name()}; border: 1px solid {edge.name()}; "
             f"border-radius: 5px; padding: 5px 8px; }}"
@@ -861,6 +963,8 @@ class DetailWindow(QWidget):
         if self._dirty:
             self._apply_snapshot()
             self._refresh_pins()
+        self._hist_rev = -1
+        self._refresh_history()
 
     def hideEvent(self, ev) -> None:
         super().hideEvent(ev)
