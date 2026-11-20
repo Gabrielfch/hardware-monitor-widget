@@ -348,6 +348,16 @@ def test_snapshot_updates_do_not_rebuild_under_a_drag(realpanel, real):
     assert GPU not in p.sections
 
 
+def test_drop_under_a_deferred_rebuild_uses_the_layout_that_is_on_screen(realpanel):
+    p = realpanel
+    p._drag_begin(p.sections[NVME])
+    p.set_prefs(Prefs(hidden_hardware=frozenset({HDD})))        # deferred: the widgets still show NVME, HDD, SSD
+    p._cancel_drag()
+    assert p.drop_item(NVME, 1)                                  # between HDD and SSD, as the user saw it
+    order = p.hw_order()
+    assert order.index(NVME) < order.index(SSD)
+
+
 # ------------------------------------------------------------------ pills
 def _pill_hw(w):
     return [p.hw_id for p in w.pills()]

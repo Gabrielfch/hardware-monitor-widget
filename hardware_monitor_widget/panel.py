@@ -914,7 +914,6 @@ class HardwarePanel(QFrame):
         by_id = {s.hw_id: s for s in summary_sections(snapshot, self._prefs)}
         layout = [(cat, [h for h in ids if h in by_id]) for cat, ids in order_hardware(snapshot, self._hw_order)]
         layout = [(cat, ids) for cat, ids in layout if ids]
-        self._tree = layout
         sections = [by_id[h] for _c, ids in layout for h in ids]
         bad = self._bad_statuses(snapshot)
         loading = self._is_loading(snapshot)
@@ -929,6 +928,7 @@ class HardwarePanel(QFrame):
                tuple((c, tuple(ids)) for c, ids in layout))
         if sig != self._sig and self._drag_item is None:        # never rebuild under a header being dragged
             self._sig = sig
+            self._tree = layout         # stays in step with the widgets (a deferred rebuild keeps the old one)
             self._rebuild(sections, bad, loading)
         else:
             self._update_in_place()
