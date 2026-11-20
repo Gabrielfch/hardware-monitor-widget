@@ -24,6 +24,7 @@ def ctl(qapp, monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     cfg = Config(tmp_path / "config.json")
+    cfg.set("language", "es")       # "auto" would follow the machine's Windows language (English on CI)
     state = {"enabled": False}
     monkeypatch.setattr(startup, "is_enabled", lambda: state["enabled"])
     monkeypatch.setattr(startup, "set_enabled", lambda v: state.update(enabled=bool(v)))
