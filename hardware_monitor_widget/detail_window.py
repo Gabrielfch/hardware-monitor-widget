@@ -10,15 +10,15 @@ import logging
 from PySide6.QtCore import QEvent, QPersistentModelIndex, QPointF, QRectF, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import (QBrush, QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPainterPath, QPen,
                            QShortcut)
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-                               QPushButton, QStackedWidget, QStyle, QStyledItemDelegate, QStyleOptionViewItem,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+                               QMenu, QPushButton, QStackedWidget, QStyle, QStyledItemDelegate, QStyleOptionViewItem,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from . import custom_icons, i18n, taskbar
 from .colors import TASKBAR_BASE, band_color, section_header_color, text_color
 from .curation import DetailHardware, DetailTree, Prefs, detail_tree, in_summary, section_title_key
 from .icons import icons_visible
-from .models import Sensor, Snapshot, band_for, format_value
+from .models import Sensor, Snapshot, band_for, default_limits, format_value, limits_for
 from .panel import bulk_state_of, covered_keys, hw_title, kind_label, kind_or_custom_pixmap, sensor_a11y_name
 from .sensor_names import display_labels, display_name, uniquify
 
@@ -202,6 +202,7 @@ class DetailWindow(QWidget):
     bulk_pin_toggled = Signal(object)               # list[Sensor] (a hardware, group or modules node)
     summary_override_changed = Signal(str, bool)    # sensor key, wanted "in summary"
     toggled_changed = Signal(object)                # list[str] node ids that differ from the default expansion
+    thresholds_changed = Signal(str, object)        # sensor key, [amber, orange, red] or None (back to defaults)
     geometry_changed = Signal(object)               # {"x", "y", "w", "h"}
 
     def __init__(self, parent=None, dark: bool | None = None):
@@ -267,6 +268,8 @@ class DetailWindow(QWidget):
         for col in _CHECK_COLS:
             self.tree.setItemDelegateForColumn(col, self._delegate)
         self.tree.itemChanged.connect(self._on_item_changed)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._on_context_menu)
         self.tree.itemExpanded.connect(lambda it: self._on_expanded(it, True))
         self.tree.itemCollapsed.connect(lambda it: self._on_expanded(it, False))
         self.message = QLabel()                 # "No results" / "No sensors yet"
@@ -555,6 +558,38 @@ class DetailWindow(QWidget):
         item.setData(COL_SUMMARY, Qt.ItemDataRole.AccessibleDescriptionRole, sum_tip)
         self._items[s.key] = item
 
+    # ------------------------------------------------------------------ thresholds
+    def can_edit_thresholds(self, key: str) -> bool:
+        s = self._snapshot.by_key().get(key)
+        return s is not None and default_limits(s.kind) is not None
+
+    def _on_context_menu(self, pos) -> None:
+        item = self.tree.itemAt(pos)
+        if item is None or item.data(0, ROLE_KIND) != "sensor":
+            return
+        key = item.data(0, ROLE_ID)
+        if not self.can_edit_thresholds(key):
+            return
+        menu = QMenu(self)
+        menu.addAction(i18n.tr("thr_menu")).triggered.connect(lambda _c=False, k=key: self.edit_thresholds(k))
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        menu.popup(self.tree.viewport().mapToGlobal(pos))
+
+    def edit_thresholds(self, key: str) -> None:
+        """Open the thresholds dialog of a sensor; emits `thresholds_changed` on save / reset."""
+        from .dialogs import app_dialog_guard
+        from .thresholds_dialog import RESET_CODE, ThresholdsDialog
+        s = self._snapshot.by_key().get(key)
+        if s is None or default_limits(s.kind) is None:
+            return
+        dlg = ThresholdsDialog(display_name(s), limits_for(s.kind, key), s.unit, self)
+        with app_dialog_guard():
+            code = dlg.exec()
+        if code == RESET_CODE:
+            self.thresholds_changed.emit(key, None)
+        elif code == QDialog.DialogCode.Accepted and dlg.is_valid():
+            self.thresholds_changed.emit(key, dlg.values())
+
     # ------------------------------------------------------------------ in-place updates
     def _update_values(self) -> None:
         by_key = self._snapshot.by_key()
@@ -565,7 +600,7 @@ class DetailWindow(QWidget):
                 s = by_key.get(key)
                 if s is None:
                     continue
-                band = band_for(s.kind, s.value)
+                band = band_for(s.kind, s.value, s.key)
                 value = format_value(s.kind, s.value, fahr, sep)
                 if band == "red":
                     value = "! " + value

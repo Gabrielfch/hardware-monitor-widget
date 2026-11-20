@@ -13,7 +13,7 @@ from typing import Callable
 
 from . import release_info
 from .colors import PALETTES
-from .config import FLOATING_ANCHORS, FULLSCREEN_PLACEMENTS, ICON_STYLES, LANGUAGE_CHOICES, PANEL_SIZES, PILL_STYLES, THEMES, UI_SCALES
+from .config import ALERT_COOLDOWN_OPTIONS, ALERT_SECONDS_OPTIONS, FLOATING_ANCHORS, FULLSCREEN_PLACEMENTS, ICON_STYLES, LANGUAGE_CHOICES, PANEL_SIZES, PILL_STYLES, THEMES, UI_SCALES
 from .curation import SUMMARY_CATEGORIES
 from .i18n import LANGUAGES as I18N_LANGUAGES, tr
 
@@ -40,6 +40,15 @@ class SettingsCallbacks:
     open_detail: Callable[[], None] = lambda: None
     reset_summary: Callable[[], None] = lambda: None
     has_overrides: Callable[[], bool] = lambda: False
+    reset_order: Callable[[], None] = lambda: None                  # asks for confirmation, then clears hw_order
+    has_order: Callable[[], bool] = lambda: False                   # a custom component order is saved
+    # alerts
+    get_alerts: Callable[[], bool] = lambda: True
+    set_alerts: Callable[[bool], None] = lambda on: None
+    get_alert_seconds: Callable[[], int] = lambda: 10
+    set_alert_seconds: Callable[[int], None] = lambda n: None
+    get_alert_cooldown: Callable[[], int] = lambda: 5
+    set_alert_cooldown: Callable[[int], None] = lambda n: None
     # personalization
     get_theme: Callable[[], str] = lambda: "auto"                   # one of config.THEMES
     set_theme: Callable[[str], None] = lambda theme: None
@@ -309,9 +318,26 @@ def build_settings_model(cb: SettingsCallbacks | None = None) -> SettingsModel:
         items.append(Action(id="open_detail", label_key="set_open_detail", run=lambda: cb.open_detail()))
         items.append(Action(id="reset_summary", label_key="set_reset_summary", run=lambda: cb.reset_summary(),
                             enabled=lambda: bool(_safe(cb.has_overrides, False))))
+        items.append(Action(id="reset_order", label_key="set_reset_order", run=lambda: cb.reset_order(),
+                            enabled=lambda: bool(_safe(cb.has_order, False))))
         return items
 
     display = Page(id="display", title_key="set_menu_display", icon="display", children=display_items)
+
+    # ---- alerts
+    def alert_choice(node_id, label_key, values, opt_key, get, set_):
+        return Choice(id=node_id, label_key=label_key,
+                      options=lambda: [Option(v, tr(opt_key, n=v)) for v in values],
+                      get=lambda: _safe(get, values[0]), set=lambda v: set_(int(v)))
+
+    alerts = Page(id="alerts", title_key="set_menu_alerts", icon="info", children=[
+        Toggle(id="alerts_enabled", label_key="set_alerts_enabled", tip_key="set_alerts_enabled_tip",
+               get=lambda: bool(_safe(cb.get_alerts, True)), set=lambda v: cb.set_alerts(bool(v))),
+        alert_choice("alert_seconds", "set_alert_seconds", ALERT_SECONDS_OPTIONS, "set_alert_seconds_opt",
+                     cb.get_alert_seconds, cb.set_alert_seconds),
+        alert_choice("alert_cooldown", "set_alert_cooldown", ALERT_COOLDOWN_OPTIONS, "set_alert_cooldown_opt",
+                     cb.get_alert_cooldown, cb.set_alert_cooldown),
+    ])
 
     # ---- personalization
     def language_options() -> list:
@@ -481,6 +507,7 @@ def build_settings_model(cb: SettingsCallbacks | None = None) -> SettingsModel:
         display,
         personalization,
         position,
+        alerts,
         icons,
         logs,
         Separator(id="root_sep"),

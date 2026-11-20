@@ -42,3 +42,12 @@ def _no_real_taskbar(monkeypatch):
     i18n.set_language("es")
     yield
     i18n.set_language(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_threshold_overrides():
+    """Per-sensor threshold overrides are process-wide: never leak them between tests."""
+    from hardware_monitor_widget import models
+    models.set_threshold_overrides({})
+    yield
+    models.set_threshold_overrides({})

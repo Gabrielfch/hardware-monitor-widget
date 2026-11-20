@@ -60,6 +60,12 @@ MAX_OVERRIDES = 1000
 MAX_DETAIL_TOGGLED = 300
 MAX_ICONS = 200
 MAX_COLLAPSED = 500
+MAX_THRESHOLDS = 500
+THRESHOLD_MIN, THRESHOLD_MAX = 0.0, 200.0       # bounds of a per-sensor band limit (degrees C or %)
+ALERT_SECONDS_RANGE = (1, 3600)
+ALERT_COOLDOWN_MIN_RANGE = (1, 1440)
+ALERT_SECONDS_OPTIONS = (5, 10, 30, 60, 120)        # choices offered in Settings (any value in range is valid)
+ALERT_COOLDOWN_OPTIONS = (1, 5, 15, 30, 60)
 MAX_KEY_LEN = 200
 HEX_COLOR_RE = re.compile(r"#[0-9a-fA-F]{6}")
 MONITOR_KEY_RE = re.compile(r"[0-9a-f#]{1,40}")
@@ -104,6 +110,10 @@ DEFAULTS = {
     "log_debug": False,
     "update_check_auto": False,
     "update_last_check": 0,
+    "thresholds": {},               # sensor key -> [amber, orange, red] overriding the default colour bands
+    "alerts_enabled": True,         # tray notification when a summary / pinned temperature stays red
+    "alert_seconds": 10,            # seconds the sensor must stay red before the notification
+    "alert_cooldown_min": 5,        # minutes between two notifications of the same sensor
 }
 
 
@@ -287,6 +297,46 @@ def _icons(key_ok):
     return clean
 
 
+def _threshold_triple(t):
+    """[amber, orange, red] as floats, strictly increasing within bounds; None when invalid."""
+    if not isinstance(t, (list, tuple)) or len(t) != 3:
+        return None
+    if not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in t):
+        return None
+    a, o, r = (float(x) for x in t)
+    if not all(THRESHOLD_MIN <= x <= THRESHOLD_MAX for x in (a, o, r)):    # also rejects NaN / inf
+        return None
+    if not (a < o < r):
+        return None
+    return [a, o, r]
+
+
+def _thresholds(v, strict):
+    if not isinstance(v, dict):
+        raise ValueError("not a dict")
+    out = {}
+    for k, t in v.items():
+        triple = _threshold_triple(t) if isinstance(k, str) and 0 < len(k) <= MAX_KEY_LEN else None
+        if triple is None:
+            if strict:
+                raise ValueError(f"invalid thresholds for {k!r}")
+            continue
+        if len(out) >= MAX_THRESHOLDS:
+            if strict:
+                raise ValueError("too many thresholds")
+            continue
+        out[k] = triple
+    return out
+
+
+def _int_range(lo, hi):
+    def clean(v, strict):
+        if not _is_int(v):
+            raise ValueError("not an int")
+        return min(hi, max(lo, v))
+    return clean
+
+
 def _update_last_check(v, strict):
     if _is_int(v) and 0 <= v <= 4102444800:
         return v
@@ -337,6 +387,10 @@ _CLEANERS = {
     "log_debug": _bool,
     "update_check_auto": _bool,
     "update_last_check": _update_last_check,
+    "thresholds": _thresholds,
+    "alerts_enabled": _bool,
+    "alert_seconds": _int_range(*ALERT_SECONDS_RANGE),
+    "alert_cooldown_min": _int_range(*ALERT_COOLDOWN_MIN_RANGE),
 }
 assert set(_CLEANERS) == set(DEFAULTS)
 

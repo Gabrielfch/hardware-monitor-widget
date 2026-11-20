@@ -62,7 +62,7 @@ def key(widget, k, mod=Qt.KeyboardModifier.NoModifier):
 
 def test_root_rows_and_title(view):
     assert view.title_text() == "Settings"
-    assert list(view.rows()) == ["display", "personalization", "position", "custom_icons", "logs",
+    assert list(view.rows()) == ["display", "personalization", "position", "alerts", "custom_icons", "logs",
                                  "start_with_windows", "updates", "about"]
     assert all(r.kind == "page" for k, r in view.rows().items() if k != "start_with_windows")
     assert view.row("start_with_windows").kind == "toggle"

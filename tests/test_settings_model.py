@@ -97,12 +97,12 @@ def ids(page):
 
 
 def test_root_order_matches_the_design(m):
-    assert ids(m.root) == ["display", "personalization", "position", "custom_icons", "logs", "root_sep",
+    assert ids(m.root) == ["display", "personalization", "position", "alerts", "custom_icons", "logs", "root_sep",
                            "start_with_windows", "updates", "about"]
     assert isinstance(m.find("root_sep"), Separator)
     assert isinstance(m.find("start_with_windows"), Toggle)
     assert [p.icon for p in m.root.items() if isinstance(p, Page)] == [
-        "display", "personalization", "position", "image", "logs", "update", "info"]
+        "display", "personalization", "position", "info", "image", "logs", "update", "info"]
 
 
 def test_pages_content(m):

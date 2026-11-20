@@ -311,7 +311,7 @@ def build_pill(sensor: Sensor, fahrenheit: bool = False, reason: str = "ok", sep
                stale: bool = False) -> Pill:
     sep = decimal_sep() if sep is None else sep
     plain = format_value(sensor.kind, sensor.value, fahrenheit, sep)
-    band = band_for(sensor.kind, sensor.value)
+    band = band_for(sensor.kind, sensor.value, sensor.key)
     alert = band == "red"
     text = ("! " + plain) if alert else plain
     lines = [sensor.hardware, f"{sensor.name}: {plain}"]
@@ -420,6 +420,7 @@ class TaskbarWidget(QWidget):
         self._started = False
         self._styled = False
         self._last_geom = None
+        self._stack_limit: int | None = None  # stacked: max height (logical px) = the screen's available area
         self._limit: int | None = None      # max extent along the bar (logical px); None = unlimited
         self._compact = False
         self._last_pos = 0.0
@@ -542,6 +543,14 @@ class TaskbarWidget(QWidget):
 
     def set_menu(self, _menu) -> None:
         """Kept for compatibility: the widget no longer opens a menu (right click -> context_menu_requested)."""
+
+    def set_stack_limit(self, limit: int | None) -> None:
+        """Max height (logical px) of the stacked bar; rows that do not fit go to a final "+N" pill."""
+        limit = None if limit is None else max(0, int(limit))
+        if limit != self._stack_limit:
+            self._stack_limit = limit
+            if self.is_stacked():
+                self._relayout()
 
     def set_extent_limit(self, limit: int | None) -> None:
         """Max length (logical px) of the bar along the taskbar; pills compact and overflow to "+K"."""
@@ -819,8 +828,9 @@ class TaskbarWidget(QWidget):
         compact = [self._pill_w(p, fm, True) for p in allp]
         total = sum(len(p.segments) or 1 for p in allp)
         probe = Pill(OVERFLOW_KEY, "", "", f"+{total}", "", overflow=True)
-        if stacked:             # one component per row: every pill is shown (the bar grows downwards)
-            comp, count, ov_ext = False, len(allp), self._pill_h
+        if stacked:             # one component per row; the bar grows downwards up to the available height
+            comp, ov_ext = False, self._pill_h
+            count = fit_count([self._pill_ext(p) for p in allp], self._stack_limit, ov_ext, spacing)
         elif self._vertical:    # a column: the main axis is the pill height, widths do not matter
             ext = [self._pill_ext(p) for p in allp]
             comp, count = False, fit_count(ext, self._limit, self._pill_h, spacing)
@@ -1055,6 +1065,7 @@ class TaskbarWidget(QWidget):
             return
         qscreen = next(q for i, q in pairs if i is sinfo)
         self._cur_screen = sinfo
+        self.set_stack_limit(qscreen.availableGeometry().height())
         floating = self._is_floating()
         infos = [] if floating else taskbar.get_taskbar_infos()
         tinfo = None if floating else taskbar_for_screen(sinfo, infos, {i.name for i, _ in pairs})

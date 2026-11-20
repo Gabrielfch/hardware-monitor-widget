@@ -17,8 +17,9 @@ from . import custom_icons, i18n, startup, taskbar
 from .appearance import apply_appearance, apply_color_scheme
 from .config import APP_DIR_NAME, Config, is_reparse_point
 from .curation import Prefs, toggle_override
+from .alerts import AlertManager, alert_sensors
 from .detail_window import DetailWindow
-from .models import Snapshot, band_for, is_stale
+from .models import Snapshot, band_for, is_stale, set_threshold_overrides
 from .panel import HardwarePanel
 from .pins import MAX_PINS, resolve_auto, toggle_bulk, toggle_pin_result
 from .placement import PlacementSettings
@@ -86,6 +87,8 @@ class Controller(QObject):
         self.lock: QLockFile | None = None   # single-instance lock, released before a relaunch
         self.warned: set[str] = set()        # one-per-session notices
         self.detail: DetailWindow | None = None
+        set_threshold_overrides(cfg.get("thresholds"))
+        self.alerts = AlertManager(cfg)
         apply_appearance(cfg)                # palette, icon style, language, colour scheme
         self._apply_icon_maps()
         app.setApplicationName(i18n.tr("app_name"))
@@ -144,6 +147,7 @@ class Controller(QObject):
         p.fahrenheit_toggled.connect(self.set_fahrenheit)
         p.collapsed_changed.connect(lambda ids: self._persist("collapsed", list(ids)))
         p.hw_order_changed.connect(self.on_hw_order_changed)
+        p.hw_order_reset_requested.connect(lambda: self.actions.reset_order())
         p.restart_admin_requested.connect(self.restart_as_admin)
         p.retry_requested.connect(self.refresh)
         p.quit_requested.connect(self.quit)
@@ -229,9 +233,36 @@ class Controller(QObject):
         if s is not None and s.value is not None:
             v = s.value * 9 / 5 + 32 if self.cfg.get("fahrenheit") else s.value
             text = f"{v:.0f}"
-        band = band_for("temperature", s.value) if s else "grey"
+        band = band_for("temperature", s.value, s.key) if s else "grey"
         self.tray.set_icon_state(text, band, not self._taskbar_light,
                                  stale=is_stale(snapshot))
+        self._check_alerts(snapshot)
+
+    def _check_alerts(self, snapshot) -> None:
+        """Tray notification for summary / pinned temperatures that stayed red (see alerts.AlertManager)."""
+        try:
+            sensors = alert_sensors(snapshot, self._prefs(), self.cfg.get("pinned"))
+            for title, body in self.alerts.check(sensors, time.monotonic(), stale=is_stale(snapshot)):
+                self.tray.notify(title, body, info=False)
+        except Exception:  # noqa: BLE001 - an alert problem must never break the sensor loop
+            log.warning("alert check failed", exc_info=True)
+
+    def on_thresholds_changed(self, key: str, triple) -> None:
+        """The user set (list of 3) or reset (None) the colour thresholds of a sensor: save and redraw everything."""
+        thr = dict(self.cfg.get("thresholds"))
+        if triple is None:
+            thr.pop(key, None)
+        else:
+            thr[key] = [float(x) for x in triple]
+        if not self._persist("thresholds", thr):
+            if self.detail is not None:
+                self.detail.set_notice(i18n.tr("integ_save_error"))
+            return
+        set_threshold_overrides(self.cfg.get("thresholds"))
+        self.widget.set_snapshot(self.snapshot)
+        self.panel.refresh_appearance()
+        if self.detail is not None:
+            self.detail.retranslate()
 
     def refresh(self) -> None:
         if self.monitor is not None:
@@ -282,6 +313,7 @@ class Controller(QObject):
             d.pin_toggled.connect(self.on_pin_toggled)
             d.bulk_pin_toggled.connect(self.on_bulk_sensors)
             d.summary_override_changed.connect(self.on_override_changed)
+            d.thresholds_changed.connect(self.on_thresholds_changed)
             d.toggled_changed.connect(lambda ids: self._persist("detail_toggled", list(ids)))
             d.geometry_changed.connect(lambda geo: self._persist("detail_geometry", dict(geo)))
             self.detail = d

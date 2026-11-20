@@ -463,3 +463,70 @@ def test_stack_toggle_is_enabled_only_when_floating(ctl):
     ctl.actions.set_placement("floating")
     assert t.enabled()
     assert m.find("pill_style").current_label()
+
+
+# ------------------------------------------------------------------ thresholds / alerts / reset order
+def test_thresholds_changed_saves_applies_and_resets(ctl):
+    ctl.on_snapshot(real_snapshot())
+    sensor = next(s for s in ctl.snapshot.sensors if s.kind == "temperature")
+    ctl.on_thresholds_changed(sensor.key, [1, 2, 3])
+    assert ctl.cfg.get("thresholds") == {sensor.key: [1.0, 2.0, 3.0]}
+    from hardware_monitor_widget.models import band_for
+    assert band_for("temperature", 50.0, sensor.key) == "red"
+    ctl.on_thresholds_changed(sensor.key, [3, 2, 1])                 # invalid: rejected, nothing changes
+    assert ctl.cfg.get("thresholds") == {sensor.key: [1.0, 2.0, 3.0]}
+    ctl.on_thresholds_changed(sensor.key, None)
+    assert ctl.cfg.get("thresholds") == {} and band_for("temperature", 50.0, sensor.key) != "red"
+
+
+def test_overheating_alert_goes_to_the_tray(ctl, monkeypatch):
+    import dataclasses
+    snap = real_snapshot()
+    hot = dataclasses.replace(snap, sensors=[dataclasses.replace(s, value=99.0) if s.kind == "temperature" else s
+                                             for s in snap.sensors])
+    clock = [1000.0]
+    monkeypatch.setattr(app_mod.time, "monotonic", lambda: clock[0])
+    ctl.on_snapshot(hot)
+    assert ctl.notes == []
+    clock[0] += 11
+    ctl.on_snapshot(hot)
+    assert ctl.notes and "99" in ctl.notes[0]
+    n = len(ctl.notes)
+    clock[0] += 30
+    ctl.on_snapshot(hot)
+    assert len(ctl.notes) == n                                      # cooldown
+
+
+def test_alert_settings_are_saved(ctl):
+    cb = ctl.actions.callbacks()
+    cb.set_alerts(False)
+    cb.set_alert_seconds(30)
+    cb.set_alert_cooldown(15)
+    assert (ctl.cfg.get("alerts_enabled"), ctl.cfg.get("alert_seconds"), ctl.cfg.get("alert_cooldown_min")) == \
+        (False, 30, 15)
+    assert (cb.get_alerts(), cb.get_alert_seconds(), cb.get_alert_cooldown()) == (False, 30, 15)
+
+
+def test_reset_order_confirms_then_clears(ctl):
+    order = ["cat:gpu", "cat:cpu"]
+    ctl.cfg.set("hw_order", order)
+    ctl.panel.set_hw_order(order)
+    ctl.widget.set_hw_order(order)
+    asked = []
+    ctl.actions._confirm = lambda t, b: asked.append(b) or False
+    ctl.actions.reset_order()
+    assert asked and ctl.cfg.get("hw_order") == order                # declined: untouched
+    ctl.actions._confirm = lambda t, b: True
+    ctl.actions.reset_order()
+    assert ctl.cfg.get("hw_order") == [] and ctl.panel.hw_order() == []
+    asked.clear()
+    ctl.actions._confirm = lambda t, b: asked.append(b) or True
+    ctl.actions.reset_order()
+    assert not asked                                                 # nothing to reset: no prompt
+
+
+def test_panel_reset_signal_reaches_the_action(ctl):
+    ctl.cfg.set("hw_order", ["cat:gpu"])
+    ctl.actions._confirm = lambda t, b: True
+    ctl.panel.hw_order_reset_requested.emit()
+    assert ctl.cfg.get("hw_order") == []

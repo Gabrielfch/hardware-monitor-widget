@@ -272,21 +272,36 @@ def test_keyboard_alt_up_down_moves_the_focused_header_and_keeps_focus(realpanel
     assert [s.hw_id for s in p._members(p.categories["cat:storage"])] == [NVME, SSD, HDD]
 
 
+def _acts(menu):
+    return [a for a in menu.actions() if not a.isSeparator()]
+
+
 def test_context_menu_has_move_up_and_down_with_disabled_ends(realpanel):
     p = realpanel
     cpu = p.sections[CPU]
     menu = cpu.build_menu()
-    assert [a.text() for a in menu.actions()] == ["Subir", "Bajar"]
-    assert [a.isEnabled() for a in menu.actions()] == [False, True]
-    menu.actions()[1].trigger()
+    assert [a.text() for a in _acts(menu)] == ["Subir", "Bajar", "Restablecer orden"]
+    assert [a.isEnabled() for a in _acts(menu)] == [False, True, False]      # no saved order yet
+    _acts(menu)[1].trigger()
     assert _tops(p)[:2] == ["cat:gpu", "cat:cpu"]
     i18n.set_language("en")
     menu = p.sections[CPU].build_menu()
-    assert [a.text() for a in menu.actions()] == ["Move up", "Move down"]
+    assert [a.text() for a in _acts(menu)] == ["Move up", "Move down", "Reset order"]
     last = p.categories["cat:storage"] if _tops(p)[-1] == "cat:storage" else p.sections[BOARD]
-    assert [a.isEnabled() for a in last.build_menu().actions()] == [True, False]
+    assert [a.isEnabled() for a in _acts(last.build_menu())][:2] == [True, False]
     menu = p.sections[NVME].build_menu()
-    assert [a.isEnabled() for a in menu.actions()] == [False, True]
+    assert [a.isEnabled() for a in _acts(menu)][:2] == [False, True]
+
+
+def test_reset_order_menu_action_requests_the_reset_once_an_order_exists(realpanel):
+    p = realpanel
+    got = []
+    p.hw_order_reset_requested.connect(lambda: got.append(1))
+    _acts(p.sections[CPU].build_menu())[1].trigger()                 # move down -> an order is saved
+    reset = _acts(p.sections[CPU].build_menu())[2]
+    assert reset.isEnabled()
+    reset.trigger()
+    assert got == [1]
 
 
 def test_drag_with_the_mouse_shows_the_indicator_and_drops(realpanel):

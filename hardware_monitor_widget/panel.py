@@ -86,7 +86,7 @@ def sensor_status_text(s: Sensor, fahrenheit: bool, critical_mark: bool = True, 
     """Status line of a row: only the value (with "!" when critical); min / max live in `sensor_range_text`."""
     sep = i18n.decimal_sep()
     text = format_value(s.kind, s.value, fahrenheit, sep)
-    if critical_mark and band_for(s.kind, s.value) == "red":
+    if critical_mark and band_for(s.kind, s.value, s.key) == "red":
         text = "! " + text
     if with_range:
         rng = sensor_range_text(s, fahrenheit)
@@ -389,7 +389,7 @@ class SensorRow(QFrame):
         panel = self._panel
         dark = panel.dark
         self._sensor = sensor
-        band = band_for(sensor.kind, sensor.value)
+        band = band_for(sensor.kind, sensor.value, sensor.key)
         text = sensor_status_text(sensor, panel.fahrenheit)
         rng = sensor_range_text(sensor, panel.fahrenheit)
         alert = band == "red"
@@ -662,6 +662,10 @@ class Section(QWidget):
             act = menu.addAction(label)
             act.setEnabled(self._panel.can_move(self.order_id, delta))
             act.triggered.connect(lambda _c=False, d=delta: self._panel.move_item(self.order_id, d, focus=focus))
+        menu.addSeparator()
+        reset = menu.addAction(i18n.tr("reset_order_menu"))
+        reset.setEnabled(bool(self._panel.hw_order()))
+        reset.triggered.connect(lambda _c=False: self._panel.hw_order_reset_requested.emit())
         return menu
 
     def show_menu(self, global_pos: QPoint, keyboard: bool = False) -> None:
@@ -726,6 +730,7 @@ class HardwarePanel(QFrame):
     startup_toggled = Signal(bool)          # kept for compatibility: the bottom bar no longer has this button
     collapsed_changed = Signal(object)      # list[str] of collapsed hw_ids and category ids
     hw_order_changed = Signal(object)       # list[str]: the new hw_order (categories and components)
+    hw_order_reset_requested = Signal()     # "Reset order" of a header menu (the controller confirms and clears)
     quit_requested = Signal()
 
     def __init__(self, parent=None, dark: bool | None = None):

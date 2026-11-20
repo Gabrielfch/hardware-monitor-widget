@@ -1028,3 +1028,22 @@ def test_stack_follows_the_mode_live(placed):
     assert wd.is_stacked()
     wd.set_placement_settings(PlacementSettings(mode="taskbar"))
     assert not wd.is_stacked() or wd._floating
+
+
+def test_stacked_height_is_limited_and_the_rest_goes_to_a_plus_n_pill(placed):
+    wd = _floating(placed, grouped=False)
+    wd.set_stacked(True)
+    n = len(wd.pills())
+    assert n == 5 and not wd.hidden_pills()
+    row = wd._pill_h
+    wd.set_stack_limit(3 * row + 40)                  # room for ~3 rows plus the "+N" pill
+    shown = wd.pills()
+    assert shown[-1].overflow and shown[-1].text == f"+{len(wd.hidden_pills())}"
+    assert len(shown) - 1 + len(wd.hidden_pills()) == n and len(shown) < n
+    assert wd.height() <= 3 * row + 40
+    assert "\n" in shown[-1].tooltip and wd.hidden_pills()[0].a11y in shown[-1].tooltip
+    wd.grab()
+    wd.set_stack_limit(None)
+    assert len(wd.pills()) == n and not wd.hidden_pills()
+    wd.set_stack_limit(1)                             # absurdly small: at least one row survives
+    assert len(wd.pills()) >= 1

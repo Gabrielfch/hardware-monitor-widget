@@ -345,7 +345,12 @@ class SettingsActions:
             list_hardware=self.list_hardware, hardware_visible=self.hardware_visible,
             set_hardware_visible=self.set_hardware_visible, category_enabled=self.category_enabled,
             set_category=self.set_category, open_detail=self.open_detail, reset_summary=self.reset_summary,
-            has_overrides=self.has_overrides,
+            has_overrides=self.has_overrides, reset_order=self.reset_order,
+            has_order=lambda: bool(self.cfg.get("hw_order")),
+            get_alerts=lambda: bool(self.cfg.get("alerts_enabled")), set_alerts=self.set_alerts,
+            get_alert_seconds=lambda: self.cfg.get("alert_seconds"), set_alert_seconds=self.set_alert_seconds,
+            get_alert_cooldown=lambda: self.cfg.get("alert_cooldown_min"),
+            set_alert_cooldown=self.set_alert_cooldown,
             get_theme=lambda: self.cfg.get("theme"), set_theme=self.ctl.set_theme,
             get_palette=lambda: self.cfg.get("color_palette"), set_palette=self.set_palette,
             open_custom_colors=self.open_custom_colors,
@@ -389,6 +394,26 @@ class SettingsActions:
             self.ctl.widget.set_pill_bars(bool(value))
         elif key == "stack_pills" and self._set(key, bool(value)):
             self.ctl.widget.set_stacked(bool(value))
+
+    def reset_order(self) -> None:
+        """Clear the saved category / component order (after confirming); panel and pills go back to default."""
+        if not self.cfg.get("hw_order"):
+            return
+        if not self._confirm(tr("set_reset_order"), tr("reset_order_confirm")):
+            return
+        if self._set("hw_order", []):
+            self.ctl.panel.set_hw_order([])
+            self.ctl.widget.set_hw_order([])
+
+    # ---- alerts
+    def set_alerts(self, on: bool) -> None:
+        self._set("alerts_enabled", bool(on))
+
+    def set_alert_seconds(self, n: int) -> None:
+        self._set("alert_seconds", int(n))
+
+    def set_alert_cooldown(self, n: int) -> None:
+        self._set("alert_cooldown_min", int(n))
 
     def set_pill_style(self, style: str) -> None:
         if self._set("pill_style", style):

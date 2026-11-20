@@ -79,15 +79,41 @@ TEMP_BANDS = (60.0, 75.0, 85.0)      # °C thresholds: < green, < amber, < orang
 LOAD_BANDS = (60.0, 85.0, 95.0)      # %
 
 
-def band_for(kind: str, value: float | None) -> str:
-    """Colour band for a sensor value: green / amber / orange / red, or grey (no value / neutral kind)."""
+# Per-sensor overrides (config "thresholds"), installed by the controller: {sensor_key: (amber, orange, red)}.
+_OVERRIDES: dict[str, tuple[float, float, float]] = {}
+
+
+def set_threshold_overrides(overrides) -> None:
+    """Install the per-sensor threshold overrides used by `band_for` (replaces the previous set)."""
+    global _OVERRIDES
+    _OVERRIDES = {k: tuple(float(x) for x in v) for k, v in (overrides or {}).items()}
+
+
+def default_limits(kind: str) -> tuple[float, float, float] | None:
+    """Default (amber, orange, red) thresholds of a sensor kind; None for kinds without bands."""
+    if kind == "temperature":
+        return TEMP_BANDS
+    if kind in ("load", "level"):
+        return LOAD_BANDS
+    return None
+
+
+def limits_for(kind: str, key: str | None = None) -> tuple[float, float, float] | None:
+    """Thresholds in effect for a sensor: its override when set, else the default of its kind."""
+    base = default_limits(kind)
+    if base is None:
+        return None
+    return _OVERRIDES.get(key, base) if key else base
+
+
+def band_for(kind: str, value: float | None, key: str | None = None) -> str:
+    """Colour band for a sensor value: green / amber / orange / red, or grey (no value / neutral kind).
+
+    `key` (sensor key) selects that sensor's threshold override, when any."""
     if value is None:
         return "grey"
-    if kind == "temperature":
-        limits = TEMP_BANDS
-    elif kind in ("load", "level"):
-        limits = LOAD_BANDS
-    else:
+    limits = limits_for(kind, key)
+    if limits is None:
         return "grey"
     if value < limits[0]:
         return "green"
