@@ -30,6 +30,7 @@ from .config import FLOATING_ANCHORS
 from .i18n import decimal_sep, tr
 from .icons import draw_kind_icon, icons_visible
 from .models import Sensor, Snapshot, band_for, format_value, is_stale, source_reason
+from .curation import order_sensors
 from .pins import resolve_pins
 from .sensor_names import display_name
 from .placement import (DOCK_GAP, MAX_PILL_H, MAX_WIDTH_FRACTION, MIN_PILL_H,  # noqa: F401  (re-exported)
@@ -334,7 +335,8 @@ def build_group(segs: list[Pill]) -> Pill:
 
 
 def group_by_hardware(pills: list[Pill]) -> list[Pill]:
-    """Group pills by hardware, in order of first appearance (values keep their pin order)."""
+    """Group pills by hardware, in order of first appearance (the caller passes them in display order, so
+    the groups follow the panel and the values of a group keep their stable component order)."""
     order: list[str] = []
     groups: dict[str, list[Pill]] = {}
     for p in pills:
@@ -349,7 +351,7 @@ def group_by_hardware(pills: list[Pill]) -> list[Pill]:
 class TaskbarWidget(QWidget):
     """Public API for the controller (T8):
 
-    Slots/methods: set_snapshot, set_pinned, set_fahrenheit, set_theme, set_light_theme,
+    Slots/methods: set_snapshot, set_pinned, set_hw_order, set_fahrenheit, set_theme, set_light_theme,
     set_placement_settings(PlacementSettings), set_ui_scale(pct), set_icon_resolver(fn),
     set_floating_anchor(anchor), refresh_style(), start(), stop(), update_position(force=True),
     current_screen_key(), list_screens(), monitor_has_taskbar(), icons_centered().
@@ -381,6 +383,7 @@ class TaskbarWidget(QWidget):
         self._ps = PlacementSettings()
         self._ui_pct = 100
         self._icon_resolver = None          # fn(hw_kind, hw_id, sensor_key) -> file name | None
+        self._hw_order: list[str] = []      # panel order (config hw_order): categories and components
         self._grouped = True                # one pill per hardware (several values) instead of one per sensor
         self._hidden: list[Pill] = []       # sensor pills collapsed into the "+K" pill
         self._all: list[Pill] = []          # every pill (before overflow)
@@ -439,6 +442,15 @@ class TaskbarWidget(QWidget):
         self._rebuild()
         if self._started:
             self.update_position()
+
+    def set_hw_order(self, order: list[str]) -> None:
+        """Order of categories and components (the panel's): pills follow it, not the order of pinning."""
+        order = [x for x in (order or ()) if isinstance(x, str)]
+        if order != self._hw_order:
+            self._hw_order = order
+            self._rebuild()
+            if self._started:
+                self.update_position()
 
     def set_grouped(self, value: bool) -> None:
         """One pill per hardware (True) or one pill per pinned sensor (False)."""
@@ -600,6 +612,8 @@ class TaskbarWidget(QWidget):
     # ------------------------------------------------------------------ model -> pills
     def _rebuild(self) -> None:
         sensors = resolve_pins(self._pinned, self._snapshot)
+        if len(sensors) > 1:       # display order, not pin order: toggling a pin never reorders the others
+            sensors = order_sensors(sensors, self._snapshot, self._hw_order)
         reason = source_reason(self._snapshot)
         stale = is_stale(self._snapshot)
         sep = decimal_sep()

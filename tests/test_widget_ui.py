@@ -729,12 +729,12 @@ def test_grouped_texts_bands_and_order(gwidget):
     assert gwidget.pill_keys()[0].startswith("group:")
 
 
-def test_grouping_follows_first_appearance_and_pin_order(gwidget):
+def test_grouping_follows_display_order_not_pin_order(gwidget):
     snap = make_snapshot()
     gwidget.set_pinned(["auto:cpu_load", "auto:gpu_temp", "auto:cpu_temp", "auto:ram_load"])
     gwidget.set_snapshot(snap)
     assert [p.hw_kind for p in gwidget.pills()] == ["cpu", "gpu", "ram"]
-    assert gwidget.pills()[0].text.split()[0] == "23%"          # load pinned before temperature
+    assert gwidget.pills()[0].text.split()[0] == "62°C"         # stable value order: temperature before load
 
 
 def test_grouped_critical_segment_alerts_the_whole_pill(gwidget):

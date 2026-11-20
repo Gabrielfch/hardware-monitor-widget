@@ -130,8 +130,17 @@ class SummarySection:
     sensors: list[Sensor]
 
 
+_SUMMARY_RANK = {c: i for i, c in enumerate(SUMMARY_CATEGORIES)}
+
+
+def sensor_sort_key(s: Sensor) -> tuple:
+    """Stable order of the values of one component (summary category, rule order, key): the same in the
+    panel rows and in the pills, so pinning or unpinning a sensor never reorders the others."""
+    c = classify(s)
+    return _SUMMARY_RANK.get(c.summary_category, len(_SUMMARY_RANK)), c.order, s.key
+
+
 def summary_sections(snapshot: Snapshot, prefs: Prefs) -> list[SummarySection]:
-    rank = {c: i for i, c in enumerate(SUMMARY_CATEGORIES)}
     found: dict[str, tuple[int, SummarySection, list[tuple]]] = {}
     for i, s in enumerate(snapshot.sensors):
         if s.hw_id in prefs.hidden_hardware or not in_summary(s, prefs):
@@ -140,8 +149,7 @@ def summary_sections(snapshot: Snapshot, prefs: Prefs) -> list[SummarySection]:
         if entry is None:
             sec = SummarySection(s.hw_id, s.hw_kind, hw_class(s.hw_id, s.hw_kind), s.hardware, [])
             entry = found[s.hw_id] = (i, sec, [])
-        c = classify(s)
-        entry[2].append(((rank.get(c.summary_category, len(rank)), c.order, s.key), s))
+        entry[2].append((sensor_sort_key(s), s))
     out = []
     for first, sec, items in sorted(found.values(),
                                     key=lambda e: _hw_sort_key(e[1].hw_kind, e[1].hw_class, e[0])):
@@ -149,6 +157,76 @@ def summary_sections(snapshot: Snapshot, prefs: Prefs) -> list[SummarySection]:
         sec.sensors = [s for _k, s in items]
         out.append(sec)
     return out
+
+
+# --- panel categories and user order (hw_order) ------------------------------------------------------
+CATEGORY_ORDER = ("cpu", "gpu", "ram", "storage", "mainboard", "network", "other")   # default panel order
+CATEGORY_PREFIX = "cat:"
+MAX_HW_ORDER = 200
+
+
+def hw_category(hw_kind: str) -> str:
+    """Panel category of a hardware kind (every kind is its own category; anything unknown is "other")."""
+    return hw_kind if hw_kind in CATEGORY_ORDER else "other"
+
+
+def category_id(cat: str) -> str:
+    return CATEGORY_PREFIX + cat
+
+
+def arrange_hardware(by_cat: Mapping[str, list[str]], hw_order: Iterable[str]) -> list[tuple[str, list[str]]]:
+    """[(category, [hw_id, ...])] in display order. `hw_order` is the saved list of `cat:<category>` and hw_id
+    entries: listed items keep that relative order, unknown entries are ignored and unlisted items (new
+    categories / hardware) stay in default order after the listed ones."""
+    order = list(hw_order)
+    pos: dict[str, int] = {}
+    for i, x in enumerate(order):
+        pos.setdefault(x, i)
+    end = len(order)
+    cats = sorted((c for c in CATEGORY_ORDER if by_cat.get(c)), key=lambda c: pos.get(category_id(c), end))
+    return [(c, sorted(by_cat[c], key=lambda h: pos.get(h, end))) for c in cats]
+
+
+def order_hardware(snapshot: Snapshot, hw_order: Iterable[str] = ()) -> list[tuple[str, list[str]]]:
+    """Every hardware of the snapshot grouped by category, in display order (see `arrange_hardware`).
+    Default order inside a category: memory before virtual memory before modules, then first appearance."""
+    first: dict[str, tuple[int, int, str]] = {}
+    for i, s in enumerate(snapshot.sensors):
+        if s.hw_id not in first:
+            first[s.hw_id] = (_CLASS_RANK.get(hw_class(s.hw_id, s.hw_kind), 0), i, hw_category(s.hw_kind))
+    by_cat: dict[str, list[str]] = {}
+    for hw_id, (_r, _i, cat) in sorted(first.items(), key=lambda kv: kv[1][:2]):
+        by_cat.setdefault(cat, []).append(hw_id)
+    return arrange_hardware(by_cat, hw_order)
+
+
+def order_sensors(sensors: list[Sensor], snapshot: Snapshot, hw_order: Iterable[str] = ()) -> list[Sensor]:
+    """`sensors` in display order: by category and component (as the panel), then by `sensor_sort_key`."""
+    rank = {h: i for i, h in enumerate(h for _c, ids in order_hardware(snapshot, hw_order) for h in ids)}
+    end = len(rank)
+    return sorted(sensors, key=lambda s: (rank.get(s.hw_id, end), sensor_sort_key(s)))
+
+
+def flatten_order(layout: list[tuple[str, list[str]]], old: Iterable[str] = (),
+                  limit: int = MAX_HW_ORDER) -> list[str]:
+    """New `hw_order` from a displayed layout: each category id followed by its components, then the old
+    entries that are not displayed now (kept so their position is remembered), cut to `limit`."""
+    out: list[str] = []
+    for cat, ids in layout:
+        out.append(category_id(cat))
+        out.extend(ids)
+    seen = set(out)
+    out.extend(x for x in old if x not in seen and not seen.add(x))
+    return out[:limit]
+
+
+def move_to(ids: list[str], item: str, index: int) -> list[str]:
+    """`ids` with `item` moved so that it ends at position `index` (clamped)."""
+    if item not in ids:
+        return list(ids)
+    rest = [x for x in ids if x != item]
+    rest.insert(max(0, min(index, len(rest))), item)
+    return rest
 
 
 @dataclass

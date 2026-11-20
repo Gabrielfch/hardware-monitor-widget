@@ -12,14 +12,15 @@ import time
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy,
+from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QScrollArea, QSizePolicy,
                                QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
 from . import custom_icons, dialogs, i18n, taskbar
 from .sensor_names import display_labels, display_name, uniquify
 from . import win_window as ww
 from .colors import TASKBAR_BASE, band_color, row_background, section_header_color, text_color
-from .curation import Prefs, SummarySection, section_title_key, summary_sections
+from .curation import (Prefs, SummarySection, category_id, flatten_order, move_to, order_hardware,
+                       section_title_key, summary_sections)
 from .icons import (SENSOR_GLYPH, _icon_from, _P, _poly, _stroked, chevron_icon, draw_eye, draw_kind_icon,
                     eye_icon, icons_visible, moon_icon, play_icon, power_icon, refresh_icon,
                     sun_icon, warning_icon)
@@ -492,12 +493,69 @@ class SourceCard(QFrame):
         return i18n.tr("status_error_plain")
 
 
-class Section(QWidget):
-    """Collapsible hardware section: header (chevron, icon, name, pin-all control, detail button) and its rows."""
+class _HeaderBar(QWidget):
+    """Header of a section or category: a click toggles it, a drag past the threshold reorders it and the
+    context menu (also the Menu key on a focused button) offers "Move up" / "Move down"."""
 
-    def __init__(self, panel: "HardwarePanel", sec: SummarySection, title: str, collapsed: bool):
+    def __init__(self, owner: "Section"):
+        super().__init__()
+        self._owner = owner
+        self._press: QPoint | None = None
+        self._dragging = False
+
+    def mousePressEvent(self, ev) -> None:
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self._press = ev.globalPosition().toPoint()
+            self._dragging = False
+            ev.accept()
+        else:
+            super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev) -> None:
+        if self._press is None or not ev.buttons() & Qt.MouseButton.LeftButton:
+            super().mouseMoveEvent(ev)
+            return
+        gp = ev.globalPosition().toPoint()
+        threshold = QGuiApplication.styleHints().startDragDistance()
+        if not self._dragging and (gp - self._press).manhattanLength() > threshold:
+            self._dragging = True
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self._owner._panel._drag_begin(self._owner)
+        if self._dragging:
+            self._owner._panel._drag_update(self._owner, gp)
+
+    def mouseReleaseEvent(self, ev) -> None:
+        if ev.button() != Qt.MouseButton.LeftButton or self._press is None:
+            super().mouseReleaseEvent(ev)
+            return
+        was, self._press, self._dragging = self._dragging, None, False
+        self.unsetCursor()
+        if was:
+            self._owner._panel._drag_end(self._owner, ev.globalPosition().toPoint(), True)
+        else:
+            self._owner.set_collapsed(not self._owner.collapsed, notify=True)
+
+    def cancel_drag(self) -> None:
+        self._press, self._dragging = None, False
+        self.unsetCursor()
+
+    def contextMenuEvent(self, ev) -> None:
+        self._owner.show_menu(ev.globalPos(), keyboard=ev.reason() == ev.Reason.Keyboard)
+        ev.accept()
+
+
+class Section(QWidget):
+    """Collapsible block of the panel: header (chevron, icon, name, pin-all control, detail button) and its
+    content. With `category` it is the header of a category (no detail button; its body holds the sections of
+    its components). `order_id` is what the user reorders: the hw_id of a component inside a category, the
+    `cat:<category>` id of a category (also of a category with a single component, shown without a header)."""
+
+    def __init__(self, panel: "HardwarePanel", sec: SummarySection, title: str, collapsed: bool,
+                 order_id: str | None = None, category: bool = False):
         super().__init__()
         self.hw_id = sec.hw_id
+        self.order_id = order_id or sec.hw_id
+        self.is_category = category
         self.keys = [s.key for s in sec.sensors]
         self._panel = panel
         self._title = title
@@ -510,7 +568,8 @@ class Section(QWidget):
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(px(4))
-        head = QWidget()
+        head = _HeaderBar(self)
+        self._head = head
         hl = QHBoxLayout(head)
         hl.setContentsMargins(px(4), px(4), px(2), px(2))
         hl.setSpacing(px(4))
@@ -537,8 +596,9 @@ class Section(QWidget):
         self.title.setFont(f)
         self.title.setStyleSheet(f"color: {_hex(color)}; background: transparent;")
         self.title.setToolTip(title)
-        self.title.setAccessibleName(title)
-        self.title.setAccessibleDescription(title)
+        name = i18n.tr("cat_header_name", name=title) if category else title
+        self.title.setAccessibleName(name)
+        self.title.setAccessibleDescription(name)
         hl.addWidget(self.title, 1)
         self.bulk = QToolButton()
         self.bulk.setObjectName("bulkBtn")
@@ -550,20 +610,25 @@ class Section(QWidget):
         self.bulk.setCursor(Qt.CursorShape.PointingHandCursor)
         self.bulk.clicked.connect(lambda _c=False: panel._on_bulk_clicked(self.hw_id))
         hl.addWidget(self.bulk)
-        self.detail_btn = QToolButton()
-        self.detail_btn.setObjectName("sectionDetailBtn")
-        self.detail_btn.setFixedSize(btn, btn)
-        self.detail_btn.setAutoRaise(True)
-        self.detail_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.detail_btn.setIconSize(QSize(px(BTN_ICON_PX), px(BTN_ICON_PX)))
-        self.detail_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.detail_btn.setIcon(list_icon(px(BTN_ICON_PX), text_color(dark)))
-        tip = i18n.tr("section_detail_tip", name=title)
-        self.detail_btn.setToolTip(tip)
-        self.detail_btn.setAccessibleName(tip)
-        self.detail_btn.clicked.connect(lambda _c=False: panel._request_detail(self.hw_id))
-        hl.addWidget(self.detail_btn)
-        head.mousePressEvent = lambda _e: self.set_collapsed(not self._collapsed, notify=True)
+        self.detail_btn: QToolButton | None = None
+        if not category:
+            self.detail_btn = QToolButton()
+            self.detail_btn.setObjectName("sectionDetailBtn")
+            self.detail_btn.setFixedSize(btn, btn)
+            self.detail_btn.setAutoRaise(True)
+            self.detail_btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            self.detail_btn.setIconSize(QSize(px(BTN_ICON_PX), px(BTN_ICON_PX)))
+            self.detail_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.detail_btn.setIcon(list_icon(px(BTN_ICON_PX), text_color(dark)))
+            tip = i18n.tr("section_detail_tip", name=title)
+            self.detail_btn.setToolTip(tip)
+            self.detail_btn.setAccessibleName(tip)
+            self.detail_btn.clicked.connect(lambda _c=False: panel._request_detail(self.hw_id))
+            hl.addWidget(self.detail_btn)
+        for b in (self.chevron, self.bulk, self.detail_btn):     # Alt+Up / Alt+Down move the focused header
+            if b is not None:
+                b.installEventFilter(self)
+        self.chevron.setAccessibleDescription(i18n.tr("reorder_hint"))
         v.addWidget(head)
         self.notice = QLabel()
         self.notice.setObjectName("bulkNotice")
@@ -573,7 +638,7 @@ class Section(QWidget):
         v.addWidget(self.notice)
         self.body = QWidget()
         self.body_layout = QVBoxLayout(self.body)
-        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        self.body_layout.setContentsMargins(px(10) if category else 0, 0, 0, 0)
         self.body_layout.setSpacing(px(4))
         v.addWidget(self.body)
         self._color = color
@@ -583,11 +648,33 @@ class Section(QWidget):
     def collapsed(self) -> bool:
         return self._collapsed
 
+    def eventFilter(self, obj, ev) -> bool:
+        if (ev.type() == QEvent.Type.KeyPress and ev.modifiers() & Qt.KeyboardModifier.AltModifier
+                and ev.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down)):
+            self._panel.move_item(self.order_id, -1 if ev.key() == Qt.Key.Key_Up else 1, focus=True)
+            return True
+        return super().eventFilter(obj, ev)
+
+    def build_menu(self, parent: QWidget | None = None, focus: bool = False) -> QMenu:
+        """Context menu of the header: Move up / Move down (disabled at the ends)."""
+        menu = QMenu(parent or self)
+        for label, delta in ((i18n.tr("move_up"), -1), (i18n.tr("move_down"), 1)):
+            act = menu.addAction(label)
+            act.setEnabled(self._panel.can_move(self.order_id, delta))
+            act.triggered.connect(lambda _c=False, d=delta: self._panel.move_item(self.order_id, d, focus=focus))
+        return menu
+
+    def show_menu(self, global_pos: QPoint, keyboard: bool = False) -> None:
+        menu = self.build_menu(self._panel, focus=keyboard)
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        menu.popup(global_pos)
+
     def set_collapsed(self, value: bool, notify: bool = False) -> None:
         self._collapsed = bool(value)
         self.body.setVisible(not self._collapsed)
         self.chevron.setIcon(chevron_icon(self._panel.px(BTN_ICON_PX - 2), not self._collapsed, self._color))
-        tip = i18n.tr("expand" if self._collapsed else "collapse", name=self._title)
+        label = i18n.tr("cat_header_name", name=self._title) if self.is_category else self._title
+        tip = i18n.tr("expand" if self._collapsed else "collapse", name=label)
         self.chevron.setToolTip(tip)
         self.chevron.setAccessibleName(tip)
         if notify:
@@ -607,7 +694,8 @@ class Section(QWidget):
         self._bulk_state, self._bulk_n, self._bulk_p = state, n, pinned
         panel = self._panel
         self.bulk.setIcon(bulk_icon(panel.px(BTN_ICON_PX), state, text_color(panel.dark)))
-        self.bulk.setAccessibleName(i18n.tr("bulk_name", name=self._title, state=i18n.tr("bulk_state_" + state)))
+        self.bulk.setAccessibleName(i18n.tr("cat_bulk_name" if self.is_category else "bulk_name",
+                                            name=self._title, state=i18n.tr("bulk_state_" + state)))
         if state == "some":
             self.bulk.setToolTip(i18n.tr("bulk_tip_some", p=pinned, n=n, name=self._title))
         else:
@@ -626,7 +714,7 @@ class Section(QWidget):
 
 class HardwarePanel(QFrame):
     pin_toggled = Signal(object)            # Sensor
-    bulk_pin_requested = Signal(str)        # hw_id: pin / unpin every summary sensor of that hardware
+    bulk_pin_requested = Signal(str)        # hw_id or "cat:<category>": pin / unpin every summary sensor of it
     detail_requested = Signal(str)          # hw_id, or "" for the whole detail window
     settings_requested = Signal()           # gear button of the bottom bar
     display_settings_requested = Signal()   # "Display settings" shortcut of the empty state
@@ -636,7 +724,8 @@ class HardwarePanel(QFrame):
     theme_toggle_requested = Signal()
     fahrenheit_toggled = Signal(bool)
     startup_toggled = Signal(bool)          # kept for compatibility: the bottom bar no longer has this button
-    collapsed_changed = Signal(object)      # list[str] of collapsed hw_ids
+    collapsed_changed = Signal(object)      # list[str] of collapsed hw_ids and category ids
+    hw_order_changed = Signal(object)       # list[str]: the new hw_order (categories and components)
     quit_requested = Signal()
 
     def __init__(self, parent=None, dark: bool | None = None):
@@ -661,7 +750,13 @@ class HardwarePanel(QFrame):
         self._notices: dict[str, int] = {}
         self.rows: dict[str, SensorRow] = {}
         self.cards: list[SourceCard] = []
-        self.sections: dict[str, Section] = {}
+        self.sections: dict[str, Section] = {}        # component sections by hw_id
+        self.categories: dict[str, Section] = {}      # category headers by "cat:<category>" (2+ components)
+        self._tops: list[Section] = []                # top-level blocks in display order
+        self._tree: list[tuple[str, list[str]]] = []  # displayed [(category, [hw_id, ...])]
+        self._hw_order: list[str] = []
+        self._drag_item: Section | None = None
+        self._indicator: QFrame | None = None
         self._empty: QLabel | None = None
         self.empty_buttons: dict[str, QToolButton] = {}
         self._armed = False
@@ -796,22 +891,43 @@ class HardwarePanel(QFrame):
 
     def set_collapsed(self, hw_ids) -> None:
         self._collapsed = {x for x in (hw_ids or ()) if isinstance(x, str)}
-        for hw_id, sec in self.sections.items():
-            sec.set_collapsed(hw_id in self._collapsed)
+        for sec in self._blocks():
+            sec.set_collapsed(sec.hw_id in self._collapsed)
+
+    def _blocks(self) -> list[Section]:
+        return [*self.categories.values(), *self.sections.values()]
+
+    def hw_order(self) -> list[str]:
+        return list(self._hw_order)
+
+    def set_hw_order(self, order) -> None:
+        """Saved order of categories and components (`cat:<category>` and hw_id entries; [] = default)."""
+        order = [x for x in (order or ()) if isinstance(x, str)]
+        if order != self._hw_order:
+            self._hw_order = order
+            self._sig = None
+            self.set_snapshot(self._snapshot)
 
     def set_snapshot(self, snapshot: Snapshot) -> None:
         """Show `snapshot`; rebuilds only when the structure changed, otherwise updates values in place."""
         self._snapshot = snapshot
-        sections = summary_sections(snapshot, self._prefs)
+        by_id = {s.hw_id: s for s in summary_sections(snapshot, self._prefs)}
+        layout = [(cat, [h for h in ids if h in by_id]) for cat, ids in order_hardware(snapshot, self._hw_order)]
+        layout = [(cat, ids) for cat, ids in layout if ids]
+        self._tree = layout
+        sections = [by_id[h] for _c, ids in layout for h in ids]
         bad = self._bad_statuses(snapshot)
         loading = self._is_loading(snapshot)
         self._summary = {s.hw_id: [x.key for x in s.sensors] for s in sections}
+        for cat, ids in layout:
+            self._summary[category_id(cat)] = [k for h in ids for k in self._summary[h]]
         sig = (self._dark, i18n.get_language(), loading, self._size, self._scale, bool(snapshot.sensors),
                icons_visible(), custom_icons.maps_version(),
                tuple((s.source, s.reason, s.detail) for s in bad),
                tuple((s.hw_id, s.hw_kind, s.hw_class, s.hardware, tuple(self._summary[s.hw_id]))
-                     for s in sections))
-        if sig != self._sig:
+                     for s in sections),
+               tuple((c, tuple(ids)) for c, ids in layout))
+        if sig != self._sig and self._drag_item is None:        # never rebuild under a header being dragged
             self._sig = sig
             self._rebuild(sections, bad, loading)
         else:
@@ -826,7 +942,8 @@ class HardwarePanel(QFrame):
         return list(self.rows)
 
     def summary_sensors(self, hw_id: str) -> list[Sensor]:
-        """Current summary sensors of `hw_id`, in panel order (what the pin-all control acts on)."""
+        """Current summary sensors of `hw_id` (or of every component of a `cat:<category>`), in panel order:
+        what the pin-all control acts on."""
         by_key = self._snapshot.by_key()
         return [by_key[k] for k in self._summary.get(hw_id, ()) if k in by_key]
 
@@ -836,7 +953,7 @@ class HardwarePanel(QFrame):
             self._notices[hw_id] = int(skipped)
         else:
             self._notices.pop(hw_id, None)
-        sec = self.sections.get(hw_id)
+        sec = self.sections.get(hw_id) or self.categories.get(hw_id)
         if sec is not None:
             sec.set_notice(self._notices.get(hw_id, 0))
 
@@ -966,6 +1083,7 @@ class HardwarePanel(QFrame):
             old.hide()
             old.deleteLater()
         self.rows, self.cards, self.sections, self._empty = {}, [], {}, None
+        self.categories, self._tops, self._indicator = {}, [], None
         self.empty_buttons = {}
 
     def _rebuild(self, sections: list[SummarySection], bad: list[SourceStatus], loading: bool = False) -> None:
@@ -983,16 +1101,21 @@ class HardwarePanel(QFrame):
             v.addWidget(card)
         every = [s for sec_data in sections for s in sec_data.sensors]
         a11y_names = dict(zip((s.key for s in every), uniquify([sensor_a11y_name(s) for s in every])))
-        for sec_data in sections:
-            sec = Section(self, sec_data, section_title(sec_data), sec_data.hw_id in self._collapsed)
-            self.sections[sec_data.hw_id] = sec
-            sec.set_notice(self._notices.get(sec_data.hw_id, 0))
-            labels = display_labels(sec_data.sensors)
-            for s in sec_data.sensors:
-                row = SensorRow(self, s, labels[s.key], a11y_names[s.key])
-                self.rows[s.key] = row
-                sec.body_layout.addWidget(row)
-            v.addWidget(sec)
+        by_id = {s.hw_id: s for s in sections}
+        for cat, ids in self._tree:
+            cid = category_id(cat)
+            if len(ids) == 1:           # one component: its header is the category header (no duplicate)
+                top = self._make_section(by_id[ids[0]], a11y_names, cid)
+            else:
+                members = [by_id[h] for h in ids]
+                top = Section(self, SummarySection(cid, cat, "", "", [s for m in members for s in m.sensors]),
+                              i18n.tr("cat_" + cat), cid in self._collapsed, order_id=cid, category=True)
+                self.categories[cid] = top
+                top.set_notice(self._notices.get(cid, 0))
+                for m in members:
+                    top.body_layout.addWidget(self._make_section(m, a11y_names, m.hw_id))
+            self._tops.append(top)
+            v.addWidget(top)
         if not sections:
             if loading:
                 v.addWidget(self._make_empty(i18n.tr("loading")))
@@ -1002,10 +1125,27 @@ class HardwarePanel(QFrame):
             else:
                 v.addWidget(self._make_empty(i18n.tr("summary_empty"), actions=True))
         v.addStretch(1)
+        self._indicator = QFrame(content)       # drop line shown while a header is dragged
+        self._indicator.setObjectName("dropLine")
+        self._indicator.setFixedHeight(max(2, self.px(3)))
+        self._indicator.setStyleSheet(f"QFrame#dropLine {{ background: {_hex(band_color('amber', self._dark))}; "
+                                      f"border: none; border-radius: 1px; }}")
+        self._indicator.hide()
         self._scroll.setWidget(content)
         self._update_in_place(force=True)
         self._apply_tab_order()
         bar.setValue(pos)
+
+    def _make_section(self, sec_data: SummarySection, a11y_names: dict[str, str], order_id: str) -> Section:
+        sec = Section(self, sec_data, section_title(sec_data), sec_data.hw_id in self._collapsed, order_id=order_id)
+        self.sections[sec_data.hw_id] = sec
+        sec.set_notice(self._notices.get(sec_data.hw_id, 0))
+        labels = display_labels(sec_data.sensors)
+        for s in sec_data.sensors:
+            row = SensorRow(self, s, labels[s.key], a11y_names[s.key])
+            self.rows[s.key] = row
+            sec.body_layout.addWidget(row)
+        return sec
 
     def _make_empty(self, text: str, actions: bool = False) -> QWidget:
         """Empty-state message; with `actions` also the shortcuts to the detail window and Display settings."""
@@ -1050,7 +1190,7 @@ class HardwarePanel(QFrame):
             s = by_key.get(key)
             if s is not None:
                 row.apply(s, key in covered, force, stale)
-        for sec in self.sections.values():
+        for sec in self._blocks():
             state = bulk_state_of(sec.keys, covered)
             sec.set_bulk(state, len(sec.keys), sum(1 for k in sec.keys if k in covered))
             if state == "all" and self._notices.get(sec.hw_id):
@@ -1062,9 +1202,12 @@ class HardwarePanel(QFrame):
         chain: list[QWidget] = [self._toolbar[n] for n in names]
         chain += [c.button for c in self.cards]
         chain += list(self.empty_buttons.values())
-        for sec in self.sections.values():
-            chain += [sec.chevron, sec.bulk, sec.detail_btn]
-            chain += [r.eye for r in self.rows.values() if sec.isAncestorOf(r)]
+        for top in self._tops:
+            members = [top] if top.hw_id in self.sections else [top, *self._members(top)]
+            for sec in members:
+                chain += [sec.chevron, sec.bulk] + ([sec.detail_btn] if sec.detail_btn is not None else [])
+                if not sec.is_category:
+                    chain += [r.eye for r in self.rows.values() if sec.isAncestorOf(r)]
         for a, b in zip(chain, chain[1:]):
             QWidget.setTabOrder(a, b)
 
@@ -1076,6 +1219,118 @@ class HardwarePanel(QFrame):
         self.set_bulk_notice(hw_id, 0)
         self.bulk_pin_requested.emit(hw_id)
         self._update_in_place()         # the control follows the real pin state, not the click
+
+    # ------------------------------------------------------------------ reordering (drag, keyboard, menu)
+    def _members(self, box: Section) -> list[Section]:
+        """Component sections inside the category header `box`."""
+        ids = next((ids for cat, ids in self._tree if category_id(cat) == box.order_id), [])
+        return [self.sections[h] for h in ids if h in self.sections]
+
+    def _sibling_ids(self, order_id: str) -> list[str]:
+        """Ids among which `order_id` is ordered: every category, or the components of its category."""
+        if order_id.startswith("cat:"):
+            return [category_id(c) for c, _ids in self._tree]
+        for _cat, ids in self._tree:
+            if order_id in ids:
+                return list(ids)
+        return []
+
+    def can_move(self, order_id: str, delta: int) -> bool:
+        ids = self._sibling_ids(order_id)
+        return order_id in ids and 0 <= ids.index(order_id) + delta < len(ids)
+
+    def move_item(self, order_id: str, delta: int, focus: bool = False) -> bool:
+        """Keyboard / menu alternative to dragging: one step up (-1) or down (+1) among its siblings."""
+        if not self.can_move(order_id, delta):
+            return False
+        ids = self._sibling_ids(order_id)
+        return self.drop_item(order_id, ids.index(order_id) + delta, focus)
+
+    def drop_item(self, order_id: str, index: int, focus: bool = False) -> bool:
+        """Put `order_id` (a category or a component) at position `index` among its siblings, save the order
+        (`hw_order_changed`) and redraw. False when nothing changes."""
+        ids = self._sibling_ids(order_id)
+        new = move_to(ids, order_id, index)
+        if not ids or new == ids:
+            return False
+        if order_id.startswith("cat:"):
+            by_cat = {category_id(c): (c, comps) for c, comps in self._tree}
+            tree = [by_cat[i] for i in new]
+        else:
+            tree = [(c, new if order_id in comps else comps) for c, comps in self._tree]
+        self._hw_order = flatten_order(tree, self._hw_order)
+        self._sig = None
+        self.set_snapshot(self._snapshot)
+        self.hw_order_changed.emit(list(self._hw_order))
+        if focus:
+            self._focus_header(order_id)
+        return True
+
+    def _focus_header(self, order_id: str) -> None:
+        sec = next((t for t in self._tops if t.order_id == order_id), None) or self.sections.get(order_id)
+        if sec is not None:
+            sec.chevron.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _sibling_blocks(self, item: Section) -> list[Section]:
+        if item.order_id.startswith("cat:"):
+            return list(self._tops)
+        return [self.sections[h] for h in self._sibling_ids(item.order_id) if h in self.sections]
+
+    def _drop_slot(self, item: Section, gpos: QPoint) -> int:
+        """Final position of `item` among its siblings if dropped at `gpos` (global)."""
+        content = self._scroll.widget()
+        if content is None:
+            return 0
+        y = content.mapFromGlobal(gpos).y()
+        slot = 0
+        for w in self._sibling_blocks(item):
+            if w is not item and w.mapTo(content, QPoint(0, 0)).y() + w.height() / 2 < y:
+                slot += 1
+        return slot
+
+    def _drag_begin(self, item: Section) -> None:
+        self._drag_item = item
+
+    def _drag_update(self, item: Section, gpos: QPoint) -> None:
+        """Show where `item` would land (a line between its siblings) and scroll near the edges."""
+        content = self._scroll.widget()
+        if content is None or self._indicator is None:
+            return
+        bar, vp = self._scroll.verticalScrollBar(), self._scroll.viewport()
+        vy = vp.mapFromGlobal(gpos).y()
+        if vy < self.px(24):
+            bar.setValue(bar.value() - self.px(20))
+        elif vy > vp.height() - self.px(24):
+            bar.setValue(bar.value() + self.px(20))
+        others = [w for w in self._sibling_blocks(item) if w is not item]
+        if not others:
+            self._indicator.hide()
+            return
+        slot = self._drop_slot(item, gpos)
+        ref = others[min(slot, len(others) - 1)]
+        top = ref.mapTo(content, QPoint(0, 0))
+        y = top.y() if slot < len(others) else top.y() + ref.height()
+        h = self._indicator.height()
+        self._indicator.setGeometry(top.x(), max(0, y - h // 2 - 2), ref.width(), h)
+        self._indicator.show()
+        self._indicator.raise_()
+
+    def _drag_end(self, item: Section, gpos: QPoint, commit: bool = True) -> None:
+        slot = self._drop_slot(item, gpos) if commit else -1
+        self._cancel_drag()
+        if slot >= 0:
+            self.drop_item(item.order_id, slot)
+        self.set_snapshot(self._snapshot)       # a rebuild may have been deferred while dragging
+
+    def _cancel_drag(self) -> None:
+        item, self._drag_item = self._drag_item, None
+        if self._indicator is not None:
+            self._indicator.hide()
+        if item is not None:
+            try:
+                item._head.cancel_drag()
+            except RuntimeError:
+                pass        # the header was deleted meanwhile
 
     def _request_detail(self, hw_id: str) -> None:
         """Ask for the detail window (opening it hides the panel, as the window takes the focus)."""
@@ -1180,6 +1435,10 @@ class HardwarePanel(QFrame):
             f"border-radius: 4px; margin: 1px; }}"
             f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
             f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}"
+            f"QMenu {{ background: {_hex(base)}; color: {_hex(text)}; border: 1px solid {_hex(edge)}; }}"
+            f"QMenu::item {{ padding: 5px 18px; }}"
+            f"QMenu::item:selected {{ background: {checked}; }}"
+            f"QMenu::item:disabled {{ color: {_hex(band_color('grey', dark))}; }}"
             f"QToolTip {{ background: {_hex(base)}; color: {_hex(text)}; "
             f"border: 1px solid {_hex(edge)}; padding: 3px; }}")
         self._title.setStyleSheet(f"color: {_hex(section_header_color(dark))}; background: transparent;")
@@ -1283,6 +1542,7 @@ class HardwarePanel(QFrame):
 
     def hideEvent(self, ev) -> None:
         super().hideEvent(ev)
+        self._cancel_drag()
         self.hidden_at = time.monotonic()
         if self.in_settings:        # the next opening shows the summary again (unless Settings is asked for)
             self.show_summary()
@@ -1297,6 +1557,9 @@ class HardwarePanel(QFrame):
             self._settings_view.go_back()       # one level up; from the root page: the summary
             return
         if key == Qt.Key.Key_Escape:
+            if self._drag_item is not None:     # Esc cancels a drag first
+                self._cancel_drag()
+                return
             self.close()
             return
         super().keyPressEvent(ev)

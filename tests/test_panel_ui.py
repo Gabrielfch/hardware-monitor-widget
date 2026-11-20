@@ -23,8 +23,8 @@ def _row(panel, suffix):
 
 def test_sections_ordered_by_hardware_kind(panel):
     panel.set_snapshot(make_snapshot())
-    assert list(panel.sections) == ["hw//amdcpu/0", "hw//gpu-amd/0", "hw//ram/0", "hw//lpc/nct6798d",
-                                    "hw//nvme/0"]
+    assert list(panel.sections) == ["hw//amdcpu/0", "hw//gpu-amd/0", "hw//ram/0", "hw//nvme/0",
+                                    "hw//lpc/nct6798d"]
     cpu = [r._sensor.kind for r in panel.rows.values() if panel.sections["hw//amdcpu/0"].isAncestorOf(r)]
     assert cpu == ["temperature", "load", "power"]
 
@@ -268,7 +268,7 @@ def test_real_snapshot_shows_the_31_summary_sensors(panel, real):
     panel.set_snapshot(real)
     assert len(panel.rows) == 31
     counts = [len(s.keys) for s in panel.sections.values()]
-    assert counts == [4, 7, 3, 3, 2, 4, 4, 4]
+    assert counts == [4, 7, 3, 3, 4, 4, 4, 2]       # CPU, GPU, memory x2, disks x3, board
 
 
 def test_ram_and_virtual_memory_are_separate_sections(panel, real):
