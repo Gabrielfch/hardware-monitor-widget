@@ -9,7 +9,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from .curation import SUMMARY_CATEGORIES
+from .curation import CATEGORY_ORDER, CATEGORY_PREFIX, MAX_HW_ORDER, SUMMARY_CATEGORIES
 from .models import HW_KINDS
 
 log = logging.getLogger(__name__)
@@ -74,6 +74,7 @@ DEFAULTS = {
     "start_with_windows": False,
     "collapsed": [],                # hw_id of sections collapsed in the panel
     "hidden_hardware": [],          # hw_id whose summary section is hidden
+    "hw_order": [],                 # panel / pill order: "cat:<category>" and hw_id entries ([] = default order)
     "summary_categories": list(SUMMARY_CATEGORIES),
     "summary_overrides": {},        # sensor key -> bool (forced in / out of the summary)
     "detail_toggled": [],           # detail-tree node ids that differ from their default state
@@ -157,6 +158,16 @@ def _collapsed(v, strict):
 
 def _hidden(v, strict):
     return _str_list(v, strict, MAX_HIDDEN_HARDWARE, lambda s: HW_ID_RE.fullmatch(s) is not None, True)
+
+
+def _hw_order_item(s: str) -> bool:
+    if s.startswith(CATEGORY_PREFIX):
+        return s[len(CATEGORY_PREFIX):] in CATEGORY_ORDER
+    return HW_ID_RE.fullmatch(s) is not None
+
+
+def _hw_order(v, strict):
+    return _str_list(v, strict, MAX_HW_ORDER, _hw_order_item, True)
 
 
 def _categories(v, strict):
@@ -293,6 +304,7 @@ _CLEANERS = {
     "start_with_windows": _bool,
     "collapsed": _collapsed,
     "hidden_hardware": _hidden,
+    "hw_order": _hw_order,
     "summary_categories": _categories,
     "summary_overrides": _overrides,
     "detail_toggled": _toggled,

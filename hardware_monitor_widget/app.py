@@ -98,12 +98,14 @@ class Controller(QObject):
         self.widget.set_fahrenheit(bool(cfg.get("fahrenheit")))
         self.widget.set_ui_scale(cfg.get("ui_scale"))
         self.widget.set_grouped(bool(cfg.get("group_pills")))
+        self.widget.set_hw_order(cfg.get("hw_order"))
         self.widget.set_icon_resolver(custom_icons.file_for)
         self.widget.set_placement_settings(self._placement())
         p = self.panel
         p.set_fahrenheit(bool(cfg.get("fahrenheit")))
         p.set_pinned(cfg.get("pinned"))
         p.set_collapsed(cfg.get("collapsed"))
+        p.set_hw_order(cfg.get("hw_order"))
         p.set_metrics(cfg.get("panel_size"), cfg.get("ui_scale"))
         p.set_prefs(self._prefs())
 
@@ -137,6 +139,7 @@ class Controller(QObject):
         p.theme_toggle_requested.connect(lambda: self.set_theme("light" if p.dark else "dark"))
         p.fahrenheit_toggled.connect(self.set_fahrenheit)
         p.collapsed_changed.connect(lambda ids: self._persist("collapsed", list(ids)))
+        p.hw_order_changed.connect(self.on_hw_order_changed)
         p.restart_admin_requested.connect(self.restart_as_admin)
         p.retry_requested.connect(self.refresh)
         p.quit_requested.connect(self.quit)
@@ -326,6 +329,14 @@ class Controller(QObject):
             return
         if self.detail is not None:
             self.detail.set_notice(i18n.tr("bulk_skipped", n=skipped) if skipped else "")
+
+    def on_hw_order_changed(self, order) -> None:
+        """The user reordered categories / components in the panel: save it and redraw the pills at once."""
+        if not self._persist("hw_order", list(order)):
+            self.notify(i18n.tr("integ_save_error"))
+            self.panel.set_hw_order(self.cfg.get("hw_order"))       # back to the saved order
+            return
+        self.widget.set_hw_order(list(order))
 
     def on_override_changed(self, key: str, want: bool) -> None:
         sensor = self.snapshot.by_key().get(key)
