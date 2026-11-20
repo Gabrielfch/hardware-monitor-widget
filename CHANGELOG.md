@@ -6,6 +6,22 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-20
+
+### Added
+- Categorías desplegables en el panel: Procesador, Gráficos, Memoria (RAM y memoria virtual), Discos (todos los
+  discos), Placa base y Red, cada una con un control para fijar o quitar todos sus sensores de la barra.
+- Orden personalizado: arrastra categorías y componentes en el panel (o Alt+Arriba/Abajo, o «Subir»/«Bajar» en
+  el menú contextual). Las píldoras siguen ese orden.
+- Estilos de píldora en Ajustes → Personalización: transparente (nuevo predeterminado, sin fondo y con una línea
+  fina entre componentes), clásico, suave y compacto.
+- Siglas CPU/GPU/RAM/DISK… en lugar de iconos, y barras de nivel opcionales.
+- Disposición apilada para el modo flotante: un componente por fila con los valores alineados.
+
+### Changed
+- Fijar o quitar un sensor ya no reordena las píldoras: el orden es el del panel, no el orden de fijado.
+- En los estilos sin fondo, un valor crítico se marca en rojo con «!».
+
 ## [0.1.0] - 2026-11-18
 
 Primera versión pública.
@@ -40,5 +56,6 @@ Primera versión pública.
   simbólicos, propietarios no confiables y permisos de escritura de usuarios estándar.
 - Detalles en `docs/SECURITY_NOTES.md`.
 
-[Unreleased]: https://github.com/Gabrielfch/hardware-monitor-widget/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Gabrielfch/hardware-monitor-widget/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Gabrielfch/hardware-monitor-widget/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Gabrielfch/hardware-monitor-widget/releases/tag/v0.1.0
